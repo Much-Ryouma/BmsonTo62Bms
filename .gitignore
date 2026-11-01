@@ -1,0 +1,15 @@
+# Build outputs
+/build/
+/out/
+CMakeUserPresets.json
+compile_commands.json
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+.qtcreator/
+
+# User's own works used only as local references (must not be published)
+/appendix/

@@ -1,0 +1,19 @@
+# 音声ファイルの名前付け (app)
+
+- 対象: `nameSounds` / `checkNamingPatterns`
+- テストコード: `tests/unit/app/SoundNamingTest.cpp`
+- 根拠: docs/SPEC.md §6.2
+
+## 何を保証するか
+
+パラ音と BGM 音に、それぞれのパターンで名前を付けること。BMS の文字コードで表せない文字は名前に残さないこと。
+
+## テスト項目
+
+| ID | 前提 | 操作 | 期待結果 |
+|---|---|---|---|
+| NAM-001 | 既定のパターン、曲名 `Song`、パラ音 2 つと BGM 音 1 つ | 名前を付ける | `wav/Song_k0001.wav`・`wav/Song_k0002.wav`・`wav/Song_b0001.wav`（並びはスライスの順） |
+| NAM-002 | 音声 `sounds/drums.wav` のレーン 3（y=0）と BGM（y=960）。パラ音 `{src}_{lane}`、BGM `{measure:03}_{id}`、62進数 | 名前を付ける | `drums_3` と `001_02`（src はフォルダと拡張子を除いた名前、measure は最初に使う小節、id はその進数の ID） |
+| NAM-003 | 曲名 `曲🎵`（Shift_JIS） | 名前を付ける | `wav/曲__k0001.wav`（🎵 は `_` になる）と警告。UTF-8 なら `wav/曲🎵_k0001.wav` |
+| NAM-004 | サブフォルダ `{song}`、曲名 `A:B` | 名前を付ける | フォルダは `A_B` |
+| NAM-005 | パターンに誤り | パターンを確かめる | どのパターンの誤りかが分かるエラー |

@@ -1,0 +1,8 @@
+# <種類>(<範囲>): <変更の要約>
+#   種類: feat fix refactor test docs build ci chore
+#   範囲: core infra app gui cli tests docs
+#
+# 本文: なぜこの変更が必要だったか (Why)
+#       ほかの方法ではなくこの方法にした理由 (あれば)
+#
+# Refs: #<Issue 番号>

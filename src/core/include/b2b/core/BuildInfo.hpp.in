@@ -1,0 +1,11 @@
+#pragma once
+
+#include <string_view>
+
+namespace b2b::core {
+
+inline constexpr std::string_view kProductName = "@PROJECT_NAME@";
+inline constexpr std::string_view kVersion = "@PROJECT_VERSION@";
+inline constexpr std::string_view kHomepageUrl = "@PROJECT_HOMEPAGE_URL@";
+
+}  // namespace b2b::core

@@ -1,0 +1,18 @@
+set(B2B_ICON_DIRECTORY "${PROJECT_SOURCE_DIR}/resources/icons")
+
+# Why not アイコンを必須にする: アイコンは後から用意するため、置かれていないうちもビルドとテストが通るようにする
+function(b2b_add_windows_resources target name description)
+    if(NOT WIN32)
+        return()
+    endif()
+    set(B2B_RC_NAME "${name}")
+    set(B2B_RC_DESCRIPTION "${description}")
+    set(B2B_RC_ICON_LINE "")
+    if(EXISTS "${B2B_ICON_DIRECTORY}/app.ico")
+        set(B2B_RC_ICON_LINE "IDI_ICON1 ICON \"${B2B_ICON_DIRECTORY}/app.ico\"")
+    endif()
+    set(rc_file "${CMAKE_CURRENT_BINARY_DIR}/${target}.rc")
+    configure_file("${PROJECT_SOURCE_DIR}/packaging/windows/app.rc.in" "${rc_file}" @ONLY)
+    target_sources(${target} PRIVATE "${rc_file}")
+    set_property(DIRECTORY "${PROJECT_SOURCE_DIR}" APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${B2B_ICON_DIRECTORY}")
+endfunction()
