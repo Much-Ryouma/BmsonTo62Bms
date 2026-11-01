@@ -2,10 +2,13 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
+#include <vector>
 
 #include <QFutureWatcher>
 #include <QMainWindow>
 
+#include "ChartSetDialog.hpp"
 #include "b2b/app/ConverterSession.hpp"
 #include "b2b/core/ports/AudioPlayer.hpp"
 
@@ -36,7 +39,12 @@ public:
     explicit MainWindow(MainWindowPorts ports, QWidget* parent = nullptr);
     ~MainWindow() override;
 
+    using ChartSetChooser = std::function<std::optional<ChartSetChoice>(const std::vector<app::ChartSummary>&)>;
+
     void openChart(const std::filesystem::path& path);
+    void openCharts(const std::vector<std::filesystem::path>& paths);
+    void openChartSet(const std::vector<app::ChartRequest>& requests, std::size_t baseIndex);
+    void selectChart(int index);
     void startExport();
     [[nodiscard]] bool isExporting() const;
     void waitForExport();
@@ -47,6 +55,7 @@ public:
     void refreshNow();
 
     void setOverwriteConfirmation(std::function<bool(const QString&)> confirm);
+    void setChartSetChooser(ChartSetChooser chooser);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -66,6 +75,8 @@ private:
     [[nodiscard]] app::ConvertOptions optionsFromWidgets() const;
     void scheduleRefresh();
     void updateView();
+    void updateChartSelector();
+    [[nodiscard]] std::vector<app::Message> allMessages() const;
     void updatePatternExamples();
     void updateSliceTable();
     void showMessages(const std::vector<app::Message>& messages);
@@ -83,6 +94,7 @@ private:
     app::ProcessLauncher& launcher_;
     app::PlayerSettings playerSettings_;
     std::function<bool(const QString&)> confirmOverwrite_;
+    ChartSetChooser chooseChartSet_;
     QFutureWatcher<app::ExportAllOutcome>* exportWatcher_;
     QTimer* refreshTimer_;
     bool applyingOptions_ = false;
@@ -90,6 +102,8 @@ private:
 
     QLineEdit* chartEdit_ = nullptr;
     QLineEdit* outputEdit_ = nullptr;
+    QComboBox* chartCombo_ = nullptr;
+    QCheckBox* allowExtraCheck_ = nullptr;
     QComboBox* formatCombo_ = nullptr;
     QSpinBox* qualitySpin_ = nullptr;
     QLineEdit* folderEdit_ = nullptr;

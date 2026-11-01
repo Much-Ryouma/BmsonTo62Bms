@@ -16,9 +16,7 @@ namespace b2b::core {
 
 namespace {
 
-constexpr int kKeyLanes = 8;
 constexpr int kStopUnitsPerBeat = 48;
-constexpr std::array<const char*, kKeyLanes> kLaneChannels = {"11", "12", "13", "14", "15", "18", "19", "16"};
 
 struct Event {
     int measure = 0;
@@ -92,12 +90,15 @@ public:
 
 private:
     void checkMode() {
-        if (!isSupportedMode(chart_.info.modeHint)) {
-            result_.errors.push_back("未対応のキーモードです: " + chart_.info.modeHint + "（対応しているのは beat-7k だけです）");
+        mode_ = findKeyMode(chart_.info.modeHint);
+        if (mode_ == nullptr) {
+            result_.errors.push_back("未対応のキーモードです: " + chart_.info.modeHint + "（対応しているのは " +
+                                     supportedModeNames() + "）");
+            return;
         }
         for (const auto& note : plan_.notes) {
-            if (note.lane < 0 || note.lane > kKeyLanes) {
-                result_.errors.push_back("beat-7k にないレーンのノーツがあります: x = " + std::to_string(note.lane));
+            if (note.lane < 0 || note.lane > mode_->lanes) {
+                result_.errors.push_back(mode_->name + " にないレーンのノーツがあります: x = " + std::to_string(note.lane));
                 return;
             }
         }
@@ -162,10 +163,14 @@ private:
     }
 
     void decideBase() {
-        usage_ = IdUsage{static_cast<int>(plan_.slices.size()), bmpIds_.size(), bpmIds_.size(), stopIds_.size()};
+        for (const auto& note : plan_.notes) {
+            usedSlices_.insert(note.slice);
+        }
+        const int largestWav = usedSlices_.empty() ? 0 : static_cast<int>(*usedSlices_.rbegin()) + 1;
+        usage_ = IdUsage{largestWav, static_cast<int>(usedSlices_.size()), bmpIds_.size(), bpmIds_.size(), stopIds_.size()};
         base_ = usage_.largest() > maxObjectId(IdBase::Base36) ? IdBase::Base62 : IdBase::Base36;
         const std::array<std::pair<const char*, int>, 4> counts = {
-            std::pair{"音声 (#WAV)", usage_.wav}, std::pair{"画像 (#BMP)", usage_.bmp},
+            std::pair{"音声 (#WAV) の ID", usage_.wav}, std::pair{"画像 (#BMP)", usage_.bmp},
             std::pair{"BPM (#BPM)", usage_.bpm}, std::pair{"停止 (#STOP)", usage_.stop}};
         for (const auto& [label, count] : counts) {
             if (count > maxObjectId(IdBase::Base62)) {
@@ -189,11 +194,11 @@ private:
             if (note.lane == 0) {
                 addEvent(note.y, "01", id);
             } else if (note.length > 0) {
-                const std::string channel = channelForLane(note.lane, true);
+                const std::string channel = channelForLane(*mode_, note.lane, true);
                 addEvent(note.y, channel, id);
                 addEvent(note.y + note.length, channel, id);
             } else {
-                addEvent(note.y, channelForLane(note.lane, false), id);
+                addEvent(note.y, channelForLane(*mode_, note.lane, false), id);
             }
         }
         for (const auto& event : bpmEvents_) { addEvent(event.y, "08", event.id); }
@@ -218,7 +223,7 @@ private:
         if (base_ == IdBase::Base62) {
             lines.push_back({BmsLineKind::Header, "#BASE 62"});
         }
-        lines.push_back({BmsLineKind::Header, "#PLAYER 1"});
+        lines.push_back({BmsLineKind::Header, "#PLAYER " + std::to_string(mode_->player)});
         lines.push_back({BmsLineKind::Header, "#GENRE " + info.genre});
         lines.push_back({BmsLineKind::Header, "#TITLE " + info.title});
         if (!info.subtitle.empty()) {
@@ -233,7 +238,7 @@ private:
         if (options_.difficulty) {
             lines.push_back({BmsLineKind::Header, "#DIFFICULTY " + std::to_string(*options_.difficulty)});
         }
-        const JudgeHeader judge = judgeHeaderFor(info.judgeRank);
+        const JudgeHeader judge = judgeHeaderFor(info.judgeRank, mode_->normalJudgePercent);
         if (judge.kind == JudgeHeaderKind::Rank) {
             lines.push_back({BmsLineKind::Header, "#RANK " + std::to_string(judge.value)});
         } else if (judge.kind == JudgeHeaderKind::DefExRank) {
@@ -260,7 +265,9 @@ private:
     }
 
     void writeDefinitions(std::vector<BmsLine>& lines) const {
-        for (std::size_t index = 0; index < soundFiles_.size(); ++index) {
+        // Why not すべてのスライスを定義する: 譜面セットでは全難易度のスライスを 1 つの ID 空間で共有するため、
+        // 使わない定義まで書くとプレイヤーが不要な音を読み込み、下位難易度まで 62進数になってしまう
+        for (const std::size_t index : usedSlices_) {
             lines.push_back({BmsLineKind::Path, "#WAV" + id(static_cast<int>(index) + 1) + " " + soundFiles_[index]});
         }
         if (!bmpNames_.empty()) {
@@ -335,11 +342,11 @@ private:
 
     void resolveCollision(int measure, const std::string& channel, const Event* event, std::vector<const Event*>& layer) {
         const std::string where = std::to_string(measure) + " 小節目のチャンネル " + channel;
-        if (channel.front() == '5') {
+        if (channel.front() == '5' || channel.front() == '6') {
             result_.errors.push_back(where + " で、ロングノーツの終点と次のノーツの始点が重なっています");
             return;
         }
-        if (channel.front() == '1') {
+        if (channel.front() == '1' || channel.front() == '2') {
             result_.warnings.push_back(where + " で同じ位置にノーツが重なっているため、後のノーツを書き出しません");
             return;
         }
@@ -377,6 +384,8 @@ private:
     const BmsWriteOptions& options_;
     MeasureLayout layout_;
     BmsWriteResult result_;
+    const KeyMode* mode_ = nullptr;
+    std::set<std::size_t> usedSlices_;
     IdBase base_ = IdBase::Base36;
     IdUsage usage_;
     IdTable<double> bpmIds_;
@@ -396,18 +405,7 @@ int IdUsage::largest() const noexcept {
 }
 
 bool isSupportedMode(const std::string& modeHint) {
-    return modeHint.empty() || modeHint == "beat-7k";
-}
-
-std::string channelForLane(int lane, bool longNote) {
-    if (lane < 1 || lane > kKeyLanes) {
-        throw std::out_of_range("lane out of range: " + std::to_string(lane));
-    }
-    std::string channel = kLaneChannels[static_cast<std::size_t>(lane - 1)];
-    if (longNote) {
-        channel.front() = '5';
-    }
-    return channel;
+    return findKeyMode(modeHint) != nullptr;
 }
 
 BmsWriteResult writeBms(const bmson::Chart& chart, const SlicePlan& plan, const std::vector<std::string>& soundFiles,

@@ -3,6 +3,7 @@ bmsonto62bms
 
 bmson の譜面を、62進数に対応した拡張 BMS（#BASE 62）に変換するツールです。
 各ノーツが鳴らす音声の区間を、1 つずつ別の音声ファイル（WAV / OGG）に切り出して書き出します。
+対応するキーモードは beat-7k・beat-14k（.bme）と popn-9k（.pms）です。
 
 ■ 動作環境
   Windows 10 / 11（64bit）
@@ -12,8 +13,15 @@ bmson の譜面を、62進数に対応した拡張 BMS（#BASE 62）に変換す
   2. bmsonto62bms.exe をダブルクリックします
   3. 「開く…」で bmson を選ぶか、ウィンドウに bmson をドロップします
   4. 左の「書き出しの設定」を決め、右の一覧で試聴して確かめます
-  5. 「書き出す」で、bmson の横に BMS（.bme）と音声ファイルのフォルダができます
+  5. 「書き出す」で、bmson の横に BMS（.bme / .pms）と音声ファイルができます
   6. 「設定 → 外部プレイヤー…」でプレイヤーを設定すると、「外部プレイヤーで開く」（F5）で確かめられます
+
+  同じ曲の複数の難易度は、bmson をまとめて選ぶ（またはドロップする）と「譜面セット」になります。
+  基準の譜面（ふつうは最も難しい譜面）を選ぶと、音声ファイルを共有した BMS を難易度ごとに書き出します。
+  譜面どうしで切り出し位置がずれているときは、短いほうの切り方に合わせます（続きは BGM で鳴らします）。
+  それでも基準の譜面にない音を使う譜面があるときは、
+  「基準の譜面にないスライスを追加で切り出す」をチェックすると書き出せます。
+
   詳しい説明: https://github.com/Much-Ryouma/bmsonto62bms
 
   インストーラーはありません。レジストリにも何も書きません。
@@ -39,6 +47,7 @@ bmson の譜面を、62進数に対応した拡張 BMS（#BASE 62）に変換す
   bmsonto62bms-cli slices 譜面.bmson
   bmsonto62bms-cli convert 譜面.bmson
   bmsonto62bms-cli convert 譜面.bmson --format ogg --edge fade --fade-out 3
+  bmsonto62bms-cli convert normal.bmson hyper.bmson another.bmson --allow-extra
 
 ■ うまく動かないとき
   - 「VCRUNTIME140.dll が見つからない」と出る: zip の中身をすべて同じフォルダに展開したか確認してください

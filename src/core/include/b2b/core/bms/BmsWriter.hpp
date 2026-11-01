@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "b2b/core/bms/KeyMode.hpp"
 #include "b2b/core/bms/ObjectId.hpp"
 #include "b2b/core/bmson/Bmson.hpp"
 #include "b2b/core/slicing/SlicePlan.hpp"
@@ -21,6 +22,7 @@ struct BmsLine {
 
 struct IdUsage {
     int wav = 0;
+    int wavDefined = 0;
     int bmp = 0;
     int bpm = 0;
     int stop = 0;
@@ -47,8 +49,6 @@ struct BmsWriteResult {
 inline constexpr int kMaxMeasure = 999;
 
 [[nodiscard]] bool isSupportedMode(const std::string& modeHint);
-
-[[nodiscard]] std::string channelForLane(int lane, bool longNote);
 
 [[nodiscard]] BmsWriteResult writeBms(const bmson::Chart& chart, const SlicePlan& plan,
                                       const std::vector<std::string>& soundFiles, const BmsWriteOptions& options);

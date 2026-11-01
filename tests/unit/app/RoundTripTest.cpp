@@ -48,6 +48,7 @@ app::Conversion convert(const core::bmson::Chart& chart, test::FakeFileSink& fil
 
 void expectSameNotes(const core::bmson::Chart& chart, const app::Conversion& conversion, const test::ReadBms& read) {
     const auto timing = core::bmson::timingOf(chart);
+    const core::KeyMode& mode = *core::findKeyMode(chart.info.modeHint);
     std::vector<Expected> expectedNotes;
     std::vector<std::tuple<double, double, std::string, std::string>> expectedLong;
     for (const auto& placed : conversion.plan.notes) {
@@ -56,9 +57,9 @@ void expectSameNotes(const core::bmson::Chart& chart, const app::Conversion& con
             expectedNotes.push_back({timing.secondsAt(placed.y), "01", file});
         } else if (placed.length > 0) {
             expectedLong.emplace_back(timing.secondsAt(placed.y), timing.secondsAt(placed.y + placed.length),
-                                      core::channelForLane(placed.lane, true), file);
+                                      core::channelForLane(mode, placed.lane, true), file);
         } else {
-            expectedNotes.push_back({timing.secondsAt(placed.y), core::channelForLane(placed.lane, false), file});
+            expectedNotes.push_back({timing.secondsAt(placed.y), core::channelForLane(mode, placed.lane, false), file});
         }
     }
 
@@ -131,4 +132,23 @@ TEST(RoundTrip, RTP002_Base62ChartReadsBackWithDistinctSounds) {
     EXPECT_EQ(read.base, core::IdBase::Base62);
     EXPECT_EQ(read.wav.size(), 1300u);
     expectSameNotes(chart, conversion, read);
+}
+
+TEST(RoundTrip, RTP003_OtherModesReadBackOnTheirOwnChannels) {
+    for (const auto& [modeName, lanes] : {std::pair{"beat-14k", 16}, std::pair{"popn-9k", 9}}) {
+        auto chart = makeChart(150.0, 240);
+        chart.info.modeHint = modeName;
+        std::vector<core::bmson::Note> notes;
+        for (int lane = 1; lane <= lanes; ++lane) {
+            notes.push_back(note(lane, static_cast<core::Pulse>(lane) * 120, lane != 1, lane % 4 == 0 ? 240 : 0));
+        }
+        notes.push_back(note(0, 60, true));
+        chart.soundChannels = {channel("keys.wav", notes)};
+
+        test::FakeFileSink files;
+        test::ReadBms read;
+        const auto conversion = convert(chart, files, read);
+        ASSERT_TRUE(conversion.document) << modeName;
+        expectSameNotes(chart, conversion, read);
+    }
 }

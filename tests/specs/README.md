@@ -41,8 +41,10 @@ tests/specs/
 | [core/timing.md](core/timing.md) | パルスから秒への変換 | TIM |
 | [core/measure_layout.md](core/measure_layout.md) | 小節の区切りと小節内の位置 | MEA |
 | [core/slice_plan.md](core/slice_plan.md) | スライスの割り出しとまとめ方 | SLC |
+| [core/slice_merge.md](core/slice_merge.md) | 譜面セットのスライスのまとめ | MRG |
 | [core/header_values.md](core/header_values.md) | 判定ランク・TOTAL の換算、数値の書き方 | HDR |
 | [core/bms_writer.md](core/bms_writer.md) | BMS の書き出し | BMW |
+| [core/key_mode.md](core/key_mode.md) | キーモードとチャンネルの対応 | KEY |
 | [core/pcm.md](core/pcm.md) | PCM のサンプルの読み書きと切り出し | PCM |
 | [core/fade.md](core/fade.md) | 切り口のフェード | FAD |
 | [core/name_pattern.md](core/name_pattern.md) | 名前のパターン | NMP |
@@ -54,6 +56,7 @@ tests/specs/
 | [infra/audio_probe.md](infra/audio_probe.md) | 音声ファイルの長さとサンプルレートの取得 | AUD |
 | [infra/audio_files.md](infra/audio_files.md) | 音声の読み込みと WAV / OGG の書き出し | ACD |
 | [app/convert_service.md](app/convert_service.md) | 変換の流れ、メッセージ、書き出し | CNV |
+| [app/convert_set.md](app/convert_set.md) | 譜面セット（複数の難易度）の変換 | SET |
 | [app/round_trip.md](app/round_trip.md) | 書き出した BMS を読み戻して bmson と比べる | RTP |
 | [app/sound_naming.md](app/sound_naming.md) | 音声ファイルの名前付け | NAM |
 | [app/sound_export.md](app/sound_export.md) | 音声ファイルの書き出し | EXP |

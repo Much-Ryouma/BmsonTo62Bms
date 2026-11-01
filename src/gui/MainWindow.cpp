@@ -1,9 +1,12 @@
 #include "MainWindow.hpp"
 
+#include <algorithm>
+
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QColor>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDir>
@@ -40,6 +43,7 @@
 #include "Settings.hpp"
 #include "b2b/core/BuildInfo.hpp"
 #include "b2b/core/timing/MeasureLayout.hpp"
+#include "b2b/infra/fs/Utf8Path.hpp"
 
 namespace b2b::gui {
 
@@ -47,7 +51,19 @@ namespace {
 
 constexpr int kRefreshDelayMs = 250;
 
-enum SliceColumn { ColumnId, ColumnKind, ColumnFile, ColumnSource, ColumnStart, ColumnLength, ColumnMeasure, ColumnCount };
+enum SliceColumn {
+    ColumnId,
+    ColumnKind,
+    ColumnFile,
+    ColumnSource,
+    ColumnStart,
+    ColumnLength,
+    ColumnMeasure,
+    ColumnCharts,
+    ColumnCount
+};
+
+const QColor kOutsideBaseBackground(0xfd, 0xeb, 0xd0);
 
 class WaitCursor {
 public:
@@ -119,7 +135,7 @@ MainWindow::~MainWindow() {
 
 void MainWindow::buildMenus() {
     auto* file = menuBar()->addMenu(QStringLiteral("ファイル(&F)"));
-    auto* open = file->addAction(QStringLiteral("bmson を開く…"), this, &MainWindow::chooseChart);
+    auto* open = file->addAction(QStringLiteral("bmson を開く…（複数選ぶと譜面セット）"), this, &MainWindow::chooseChart);
     open->setShortcut(QKeySequence::Open);
     auto* exportAction = file->addAction(QStringLiteral("書き出す"), this, &MainWindow::startExport);
     exportAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_E));
@@ -161,9 +177,35 @@ QWidget* MainWindow::buildFileRow() {
     layout->addWidget(new QLabel(QStringLiteral("bmson"), row), 0, 0);
     layout->addWidget(chartEdit_, 0, 1);
     layout->addWidget(openButton, 0, 2);
-    layout->addWidget(new QLabel(QStringLiteral("書き出す BMS"), row), 1, 0);
-    layout->addWidget(outputEdit_, 1, 1);
-    layout->addWidget(outputButton, 1, 2);
+
+    chartCombo_ = new QComboBox(row);
+    chartCombo_->setObjectName(QStringLiteral("chartSelector"));
+    chartCombo_->setToolTip(QStringLiteral("表示・試聴する譜面。書き出しでは、譜面セットのすべての譜面を書き出します"));
+    connect(chartCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (!applyingOptions_ && index >= 0) {
+            selectChart(index);
+        }
+    });
+    difficultyCombo_ = new QComboBox(row);
+    difficultyCombo_->setObjectName(QStringLiteral("difficulty"));
+    fillDifficultyCombo(*difficultyCombo_);
+    connect(difficultyCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (applyingOptions_ || !session_.hasChart() || exporting_) {
+            return;
+        }
+        const WaitCursor wait;
+        session_.setDifficulty(index > 0 ? std::optional<int>(index) : std::nullopt);
+        updateView();
+    });
+    auto* chartRow = new QHBoxLayout;
+    chartRow->addWidget(chartCombo_, 1);
+    chartRow->addWidget(new QLabel(QStringLiteral("#DIFFICULTY"), row));
+    chartRow->addWidget(difficultyCombo_);
+    layout->addWidget(new QLabel(QStringLiteral("譜面"), row), 1, 0);
+    layout->addLayout(chartRow, 1, 1, 1, 2);
+    layout->addWidget(new QLabel(QStringLiteral("書き出す BMS"), row), 2, 0);
+    layout->addWidget(outputEdit_, 2, 1);
+    layout->addWidget(outputButton, 2, 2);
     return row;
 }
 
@@ -231,14 +273,17 @@ QWidget* MainWindow::buildOptionsPanel() {
     encodingCombo_ = new QComboBox(optionsPanel_);
     encodingCombo_->setObjectName(QStringLiteral("encoding"));
     encodingCombo_->addItems({QStringLiteral("Shift_JIS"), QStringLiteral("UTF-8")});
-    difficultyCombo_ = new QComboBox(optionsPanel_);
-    difficultyCombo_->setObjectName(QStringLiteral("difficulty"));
-    difficultyCombo_->addItems({QStringLiteral("書かない"), QStringLiteral("1 BEGINNER"), QStringLiteral("2 NORMAL"),
-                                QStringLiteral("3 HYPER"), QStringLiteral("4 ANOTHER"), QStringLiteral("5 INSANE")});
     form->addRow(QStringLiteral("BMS の文字コード"), encodingCombo_);
-    form->addRow(QStringLiteral("#DIFFICULTY"), difficultyCombo_);
 
-    for (QComboBox* combo : {formatCombo_, edgeCombo_, encodingCombo_, difficultyCombo_}) {
+    allowExtraCheck_ = new QCheckBox(QStringLiteral("基準の譜面にないスライスを追加で切り出す"), optionsPanel_);
+    allowExtraCheck_->setObjectName(QStringLiteral("allowExtraSlices"));
+    allowExtraCheck_->setToolTip(QStringLiteral(
+        "譜面セットで、ほかの難易度にだけある切り出し位置の音も書き出します。\n"
+        "チェックしないときは、そのような譜面があるとエラーになります"));
+    form->addRow(QStringLiteral("譜面セット"), allowExtraCheck_);
+    connect(allowExtraCheck_, &QCheckBox::toggled, this, &MainWindow::scheduleRefresh);
+
+    for (QComboBox* combo : {formatCombo_, edgeCombo_, encodingCombo_}) {
         connect(combo, &QComboBox::currentIndexChanged, this, &MainWindow::scheduleRefresh);
     }
     connect(qualitySpin_, &QSpinBox::valueChanged, this, &MainWindow::scheduleRefresh);
@@ -261,7 +306,7 @@ QWidget* MainWindow::buildSlicePanel() {
     sliceTable_->setObjectName(QStringLiteral("slices"));
     sliceTable_->setHorizontalHeaderLabels({QStringLiteral("ID"), QStringLiteral("種類"), QStringLiteral("ファイル名"),
                                             QStringLiteral("元の音声"), QStringLiteral("開始（秒）"),
-                                            QStringLiteral("長さ（秒）"), QStringLiteral("最初の小節")});
+                                            QStringLiteral("長さ（秒）"), QStringLiteral("最初の小節"), QStringLiteral("使う譜面")});
     sliceTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     sliceTable_->setSelectionMode(QAbstractItemView::SingleSelection);
     sliceTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -346,7 +391,7 @@ void MainWindow::applyOptionsToWidgets(const app::ConvertOptions& options) {
     fadeInCheck_->setChecked(options.fade.fadeIn);
     fadeInSpin_->setValue(options.fade.fadeInMs);
     encodingCombo_->setCurrentIndex(options.encoding == infra::TextEncoding::Utf8 ? 1 : 0);
-    difficultyCombo_->setCurrentIndex(options.difficulty.value_or(0));
+    allowExtraCheck_->setChecked(options.allowExtraSlices);
     applyingOptions_ = false;
 }
 
@@ -362,9 +407,7 @@ app::ConvertOptions MainWindow::optionsFromWidgets() const {
     options.fade.fadeIn = fadeInCheck_->isChecked();
     options.fade.fadeInMs = fadeInSpin_->value();
     options.encoding = encodingCombo_->currentIndex() == 1 ? infra::TextEncoding::Utf8 : infra::TextEncoding::ShiftJis;
-    if (difficultyCombo_->currentIndex() > 0) {
-        options.difficulty = difficultyCombo_->currentIndex();
-    }
+    options.allowExtraSlices = allowExtraCheck_->isChecked();
     return options;
 }
 
@@ -386,21 +429,109 @@ void MainWindow::refreshNow() {
 }
 
 void MainWindow::openChart(const std::filesystem::path& path) {
-    if (exporting_) {
+    openChartSet({app::ChartRequest{path, std::nullopt}}, 0);
+}
+
+void MainWindow::openCharts(const std::vector<std::filesystem::path>& paths) {
+    if (exporting_ || paths.empty()) {
+        return;
+    }
+    if (paths.size() == 1) {
+        openChart(paths.front());
+        return;
+    }
+    std::vector<app::ChartSummary> summaries;
+    {
+        const WaitCursor wait;
+        for (const auto& path : paths) {
+            summaries.push_back(session_.summarize(path));
+        }
+    }
+    std::optional<ChartSetChoice> choice;
+    if (chooseChartSet_) {
+        choice = chooseChartSet_(summaries);
+    } else {
+        ChartSetDialog dialog(summaries, this);
+        if (dialog.exec() == QDialog::Accepted) {
+            choice = dialog.choice();
+        }
+    }
+    if (!choice) {
+        return;
+    }
+    std::vector<app::ChartRequest> requests;
+    for (std::size_t index = 0; index < paths.size(); ++index) {
+        requests.push_back({paths[index], index < choice->difficulties.size() ? choice->difficulties[index] : std::nullopt});
+    }
+    openChartSet(requests, choice->baseIndex);
+}
+
+void MainWindow::openChartSet(const std::vector<app::ChartRequest>& requests, std::size_t baseIndex) {
+    if (exporting_ || requests.empty()) {
         return;
     }
     {
         const WaitCursor wait;
         refreshTimer_->stop();
         session_.setOptions(optionsFromWidgets());
-        session_.openChart(path);
+        session_.openCharts(requests, baseIndex);
     }
-    chartEdit_->setText(QDir::toNativeSeparators(toQString(path)));
-    outputEdit_->setText(QDir::toNativeSeparators(toQString(session_.outputPath())));
-    setWindowTitle(QStringLiteral("%1 - bmsonto62bms").arg(toQString(path.filename())));
+    const auto& base = requests[session_.baseIndex()].path;
+    setWindowTitle(requests.size() == 1
+                       ? QStringLiteral("%1 - bmsonto62bms").arg(toQString(base.filename()))
+                       : QStringLiteral("%1 ほか %2 譜面 - bmsonto62bms").arg(toQString(base.filename())).arg(requests.size() - 1));
     auto settings = openSettings();
-    settings->setValue(QStringLiteral("paths/lastDirectory"), QDir::fromNativeSeparators(toQString(path.parent_path())));
+    settings->setValue(QStringLiteral("paths/lastDirectory"), QDir::fromNativeSeparators(toQString(base.parent_path())));
+    updateChartSelector();
     updateView();
+}
+
+void MainWindow::selectChart(int index) {
+    if (index < 0 || static_cast<std::size_t>(index) >= session_.chartCount()) {
+        return;
+    }
+    player_.stop();
+    session_.selectChart(static_cast<std::size_t>(index));
+    updateChartSelector();
+    updateView();
+}
+
+void MainWindow::updateChartSelector() {
+    applyingOptions_ = true;
+    chartCombo_->clear();
+    for (std::size_t index = 0; index < session_.chartCount(); ++index) {
+        const auto& conversion = session_.conversionSet().charts.at(index);
+        QString label = toQString(conversion.chartPath.filename());
+        if (!conversion.chart.info.chartName.empty()) {
+            label += QStringLiteral("　%1").arg(toQString(conversion.chart.info.chartName));
+        }
+        if (session_.chartCount() > 1 && index == session_.baseIndex()) {
+            label += QStringLiteral("（基準）");
+        }
+        chartCombo_->addItem(label);
+    }
+    chartCombo_->setCurrentIndex(static_cast<int>(session_.selectedIndex()));
+    chartCombo_->setEnabled(session_.chartCount() > 1);
+    difficultyCombo_->setCurrentIndex(session_.difficulty().value_or(0));
+    difficultyCombo_->setEnabled(session_.hasChart());
+    chartEdit_->setText(session_.hasChart() ? QDir::toNativeSeparators(toQString(session_.chartPath())) : QString());
+    outputEdit_->setText(session_.hasChart() ? QDir::toNativeSeparators(toQString(session_.outputPath())) : QString());
+    applyingOptions_ = false;
+}
+
+std::vector<app::Message> MainWindow::allMessages() const {
+    const app::ConversionSet& set = session_.conversionSet();
+    std::vector<app::Message> messages = set.messages;
+    for (const auto& conversion : set.charts) {
+        for (const auto& message : conversion.messages) {
+            app::Message shown = message;
+            if (set.charts.size() > 1) {
+                shown.text = "[" + infra::pathToUtf8(conversion.chartPath.filename()) + "] " + shown.text;
+            }
+            messages.push_back(std::move(shown));
+        }
+    }
+    return messages;
 }
 
 void MainWindow::updateView() {
@@ -410,20 +541,25 @@ void MainWindow::updateView() {
         appendMessage(app::Severity::Info,
                       QStringLiteral("bmson を開いてください（ファイル → bmson を開く、またはウィンドウにドロップ）"));
     } else {
-        showMessages(conversion.messages);
+        showMessages(allMessages());
     }
 
     if (conversion.document) {
         const auto& usage = conversion.document->usage;
-        summaryLabel_->setText(QStringLiteral("スライス %1 個（パラ音 %2 / BGM 音 %3）　%4進数　#WAV %5・#BMP %6・#BPM %7・#STOP %8")
+        const core::KeyMode* mode = core::findKeyMode(conversion.chart.info.modeHint);
+        const QString wav = usage.wavDefined == usage.wav
+                                ? QString::number(usage.wav)
+                                : QStringLiteral("%1（ID は %2 まで）").arg(usage.wavDefined).arg(toQString(core::formatObjectId(usage.wav, conversion.document->base)));
+        summaryLabel_->setText(QStringLiteral("%9　スライス %1 個（パラ音 %2 / BGM 音 %3）　%4進数　#WAV %5・#BMP %6・#BPM %7・#STOP %8")
                                    .arg(conversion.plan.slices.size())
                                    .arg(conversion.plan.countOf(core::SliceKind::Key))
                                    .arg(conversion.plan.countOf(core::SliceKind::Bgm))
                                    .arg(conversion.document->base == core::IdBase::Base62 ? 62 : 36)
-                                   .arg(usage.wav)
+                                   .arg(wav)
                                    .arg(usage.bmp)
                                    .arg(usage.bpm)
-                                   .arg(usage.stop));
+                                   .arg(usage.stop)
+                                   .arg(mode != nullptr ? toQString(mode->name) : QString()));
     } else {
         summaryLabel_->setText(session_.hasChart() ? QStringLiteral("変換できません（下のメッセージを見てください）")
                                                    : QString());
@@ -469,15 +605,18 @@ void MainWindow::updatePatternExamples() {
             continue;
         }
         QString example;
-        for (std::size_t index = 0; index < conversion.soundFiles.size(); ++index) {
-            const QString file = toQString(conversion.soundFiles[index]);
-            if (target.kind < 0) {
-                const qsizetype slash = file.lastIndexOf(QLatin1Char('/'));
-                example = slash < 0 ? QStringLiteral("（BMS と同じフォルダ）") : file.left(slash) + QLatin1Char('/');
-                break;
+        if (target.kind < 0) {
+            if (conversion.document) {
+                example = conversion.soundFolder.empty()
+                              ? QStringLiteral("（BMS と同じフォルダ）")
+                              : toQString(conversion.soundFolder) + QStringLiteral("/（#WAV にはフォルダを付けない）");
             }
+            setExample(target.label, example.isEmpty() ? QString() : QStringLiteral("例: ") + example, false);
+            continue;
+        }
+        for (std::size_t index = 0; index < conversion.soundFiles.size(); ++index) {
             if (static_cast<int>(conversion.plan.slices[index].kind) == target.kind) {
-                example = file.mid(file.lastIndexOf(QLatin1Char('/')) + 1);
+                example = toQString(conversion.soundFiles[index]);
                 break;
             }
         }
@@ -496,23 +635,44 @@ void MainWindow::updateSliceTable() {
         return;
     }
     const auto& slices = conversion.plan.slices;
+    const app::ConversionSet& set = session_.conversionSet();
+    const bool several = set.charts.size() > 1;
     const core::MeasureLayout layout(conversion.chart.info.resolution, conversion.chart.lines);
+    sliceTable_->setColumnHidden(ColumnCharts, !several);
     sliceTable_->setRowCount(static_cast<int>(slices.size()));
     for (std::size_t index = 0; index < slices.size(); ++index) {
         const core::Slice& slice = slices[index];
         const auto row = static_cast<int>(index);
-        const QStringList cells = {
+        QStringList cells = {
             toQString(core::formatObjectId(row + 1, conversion.document->base)),
             slice.kind == core::SliceKind::Key ? QStringLiteral("パラ音") : QStringLiteral("BGM"),
-            toQString(conversion.soundFiles[index]),
+            toQString(app::soundFileOnDisk(conversion, index)),
             toQString(slice.source),
             seconds(slice.startSeconds()),
             seconds(slice.lengthSeconds()),
-            QString::number(layout.locate(slice.firstPulse).measure)};
+            QString::number(layout.locate(slice.firstPulse).measure),
+            QString()};
+        const std::vector<std::size_t> noUsers;
+        const auto& users = index < set.sliceUsers.size() ? set.sliceUsers[index] : noUsers;
+        QStringList chartNumbers;
+        for (const std::size_t chart : users) {
+            chartNumbers << QString::number(chart + 1);
+        }
+        cells[ColumnCharts] = chartNumbers.join(QLatin1Char(','));
+        const bool outsideBase = several && std::find(users.begin(), users.end(), set.baseIndex) == users.end();
+        const bool unused = several && std::find(users.begin(), users.end(), session_.selectedIndex()) == users.end();
         for (int column = 0; column < ColumnCount; ++column) {
             auto* item = new QTableWidgetItem(cells[column]);
             if (column == ColumnStart || column == ColumnLength || column == ColumnMeasure) {
                 item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+            }
+            // Why not 選んだ譜面のスライスだけを並べる: ID は譜面セットで共通なので、全体を並べたほうが ID と行が対応して見やすい
+            if (outsideBase) {
+                item->setBackground(kOutsideBaseBackground);
+                item->setToolTip(QStringLiteral("基準の譜面にないスライス（追加で切り出す）"));
+            }
+            if (unused) {
+                item->setForeground(QColor(0x99, 0x99, 0x99));
             }
             sliceTable_->setItem(row, column, item);
         }
@@ -556,16 +716,18 @@ void MainWindow::setBusy(bool busy) {
 void MainWindow::chooseChart() {
     auto settings = openSettings();
     const QString start = settings->value(QStringLiteral("paths/lastDirectory")).toString();
-    const QString file = QFileDialog::getOpenFileName(this, QStringLiteral("bmson を開く"), start,
-                                                      QStringLiteral("bmson (*.bmson);;すべてのファイル (*)"));
-    if (!file.isEmpty()) {
-        openChart(toPath(file));
+    const QStringList files = QFileDialog::getOpenFileNames(this, QStringLiteral("bmson を開く（複数選ぶと譜面セット）"), start,
+                                                            QStringLiteral("bmson (*.bmson);;すべてのファイル (*)"));
+    std::vector<std::filesystem::path> paths;
+    for (const QString& file : files) {
+        paths.push_back(toPath(file));
     }
+    openCharts(paths);
 }
 
 void MainWindow::chooseOutput() {
     const QString file = QFileDialog::getSaveFileName(this, QStringLiteral("書き出す BMS"), outputEdit_->text(),
-                                                      QStringLiteral("BMS (*.bme *.bms)"));
+                                                      QStringLiteral("BMS (*.bme *.bms *.pms)"));
     if (!file.isEmpty()) {
         outputEdit_->setText(QDir::toNativeSeparators(file));
         session_.setOutputPath(toPath(file));
@@ -577,15 +739,24 @@ void MainWindow::setOverwriteConfirmation(std::function<bool(const QString&)> co
     confirmOverwrite_ = std::move(confirm);
 }
 
+void MainWindow::setChartSetChooser(ChartSetChooser chooser) {
+    chooseChartSet_ = std::move(chooser);
+}
+
 void MainWindow::startExport() {
     refreshNow();
     if (exporting_ || !session_.canExport()) {
         return;
     }
-    const QString output = toQString(session_.outputPath());
-    if (QFileInfo::exists(output)) {
+    QStringList existing;
+    for (const auto& output : session_.outputPaths()) {
+        if (QFileInfo::exists(toQString(output))) {
+            existing << QDir::toNativeSeparators(toQString(output));
+        }
+    }
+    if (!existing.isEmpty()) {
         const QString question = QStringLiteral("%1 はすでにあります。上書きしますか？\n（音声ファイルも同じ名前のものは上書きされます）")
-                                     .arg(QDir::toNativeSeparators(output));
+                                     .arg(existing.join(QStringLiteral("\n")));
         const bool overwrite = confirmOverwrite_ ? confirmOverwrite_(question)
                                                  : QMessageBox::question(this, QStringLiteral("上書きの確認"), question) ==
                                                        QMessageBox::Yes;
@@ -624,8 +795,10 @@ void MainWindow::finishExport() {
         appendMessage(message.severity, toQString(message.text));
     }
     if (outcome.succeeded) {
-        appendMessage(app::Severity::Info, QStringLiteral("BMS を書き出しました: %1")
-                                               .arg(QDir::toNativeSeparators(toQString(session_.outputPath()))));
+        for (const auto& output : session_.outputPaths()) {
+            appendMessage(app::Severity::Info,
+                          QStringLiteral("BMS を書き出しました: %1").arg(QDir::toNativeSeparators(toQString(output))));
+        }
         previewCombo_->setCurrentIndex(1);
         statusBar()->showMessage(QStringLiteral("書き出しました: %1").arg(QDir::toNativeSeparators(toQString(session_.outputPath()))));
     }
@@ -694,13 +867,20 @@ void MainWindow::closeEvent(QCloseEvent* event) {
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
     const auto urls = event->mimeData()->urls();
-    if (!exporting_ && urls.size() == 1 && urls.front().toLocalFile().endsWith(QStringLiteral(".bmson"), Qt::CaseInsensitive)) {
+    const bool allCharts = std::all_of(urls.begin(), urls.end(), [](const QUrl& url) {
+        return url.toLocalFile().endsWith(QStringLiteral(".bmson"), Qt::CaseInsensitive);
+    });
+    if (!exporting_ && !urls.isEmpty() && allCharts) {
         event->acceptProposedAction();
     }
 }
 
 void MainWindow::dropEvent(QDropEvent* event) {
-    openChart(toPath(event->mimeData()->urls().front().toLocalFile()));
+    std::vector<std::filesystem::path> paths;
+    for (const QUrl& url : event->mimeData()->urls()) {
+        paths.push_back(toPath(url.toLocalFile()));
+    }
+    openCharts(paths);
 }
 
 }  // namespace b2b::gui

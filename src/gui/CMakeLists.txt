@@ -6,6 +6,8 @@ add_library(b2b_gui STATIC
     AboutDialog.hpp
     AppIcon.cpp
     AppIcon.hpp
+    ChartSetDialog.cpp
+    ChartSetDialog.hpp
     MainWindow.cpp
     MainWindow.hpp
     PlayerSettingsDialog.cpp

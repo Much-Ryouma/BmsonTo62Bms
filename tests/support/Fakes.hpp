@@ -14,8 +14,13 @@ namespace b2b::test {
 class FakeChartSource final : public app::ChartSource {
 public:
     std::optional<core::bmson::Chart> chart;
+    std::map<std::string, core::bmson::Chart> byName;
 
-    [[nodiscard]] app::LoadedChart load(const std::filesystem::path&) const override {
+    [[nodiscard]] app::LoadedChart load(const std::filesystem::path& path) const override {
+        const auto found = byName.find(infra::pathToUtf8(path.filename()));
+        if (found != byName.end()) {
+            return app::LoadedChart{found->second, {}};
+        }
         if (!chart) {
             throw std::runtime_error("broken");
         }

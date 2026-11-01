@@ -14,7 +14,8 @@ namespace {
 
 BmsWriteResult write(const bmson::Chart& chart, BmsWriteOptions options = {}) {
     const std::vector<AudioInfo> audio(chart.soundChannels.size(), AudioInfo{1000, 1000000});
-    const SlicePlan plan = planSlices(chart, bmson::timingOf(chart), audio);
+    const KeyMode* mode = findKeyMode(chart.info.modeHint);
+    const SlicePlan plan = planSlices(chart, bmson::timingOf(chart), audio, mode != nullptr ? mode->lanes : kBeat7kLanes);
     std::vector<std::string> files;
     for (std::size_t index = 0; index < plan.slices.size(); ++index) {
         files.push_back("s" + std::to_string(index + 1) + ".wav");
@@ -78,8 +79,8 @@ TEST(BmsWriter, BMW003_LanesMapToBeat7kChannels) {
     const std::vector<std::string> normal = {"11", "12", "13", "14", "15", "18", "19", "16"};
     const std::vector<std::string> longNote = {"51", "52", "53", "54", "55", "58", "59", "56"};
     for (int lane = 1; lane <= 8; ++lane) {
-        EXPECT_EQ(channelForLane(lane, false), normal[static_cast<std::size_t>(lane - 1)]);
-        EXPECT_EQ(channelForLane(lane, true), longNote[static_cast<std::size_t>(lane - 1)]);
+        EXPECT_EQ(channelForLane(*findKeyMode("beat-7k"), lane, false), normal[static_cast<std::size_t>(lane - 1)]);
+        EXPECT_EQ(channelForLane(*findKeyMode("beat-7k"), lane, true), longNote[static_cast<std::size_t>(lane - 1)]);
     }
 }
 
@@ -200,7 +201,7 @@ TEST(BmsWriter, BMW014_MeasureBeyond999IsAnError) {
 
 TEST(BmsWriter, BMW015_UnsupportedModeIsAnError) {
     auto chart = makeChart();
-    chart.info.modeHint = "popn-9k";
+    chart.info.modeHint = "keyboard-24k";
     chart.soundChannels = {channel("a.wav", {note(1, 0)})};
     EXPECT_FALSE(write(chart).document);
 }
@@ -238,4 +239,71 @@ TEST(BmsWriter, BMW018_FileNameLinesAreMarkedAsPaths) {
                           line.text.rfind("#STAGEFILE", 0) == 0;
         EXPECT_EQ(line.kind == BmsLineKind::Path, path) << line.text;
     }
+}
+
+TEST(BmsWriter, BMW019_Beat14kUsesTheSecondPlayerSide) {
+    auto chart = makeChart();
+    chart.info.modeHint = "beat-14k";
+    chart.soundChannels = {channel("a.wav", {note(1, 0), note(9, 0), note(16, 0), note(14, 0, false, 480)})};
+    const auto result = write(chart);
+    ASSERT_TRUE(result.document);
+    const auto& document = *result.document;
+    EXPECT_TRUE(hasLine(document, "#PLAYER 3"));
+    EXPECT_FALSE(linesStartingWith(document, "#00011:").empty());
+    EXPECT_FALSE(linesStartingWith(document, "#00021:").empty());
+    EXPECT_FALSE(linesStartingWith(document, "#00026:").empty());
+    EXPECT_FALSE(linesStartingWith(document, "#00068:").empty());
+}
+
+TEST(BmsWriter, BMW020_Popn9kUsesPmsChannelsAndItsJudgeWindow) {
+    auto chart = makeChart();
+    chart.info.modeHint = "popn-9k";
+    chart.soundChannels = {channel("a.wav", {note(5, 0), note(6, 0), note(9, 0)})};
+    const auto result = write(chart);
+    ASSERT_TRUE(result.document);
+    const auto& document = *result.document;
+    EXPECT_TRUE(hasLine(document, "#PLAYER 1"));
+    EXPECT_FALSE(linesStartingWith(document, "#00015:").empty());
+    EXPECT_FALSE(linesStartingWith(document, "#00022:").empty());
+    EXPECT_FALSE(linesStartingWith(document, "#00025:").empty());
+    EXPECT_TRUE(hasLine(document, "#DEFEXRANK 143"));
+}
+
+namespace {
+
+BmsWriteResult writeUsing(std::size_t sliceCount, const std::vector<std::size_t>& used) {
+    auto chart = makeChart();
+    SlicePlan plan;
+    std::vector<std::string> files;
+    for (std::size_t index = 0; index < sliceCount; ++index) {
+        Slice slice;
+        slice.source = "a.wav";
+        slice.startFrame = static_cast<std::int64_t>(index);
+        slice.endFrame = static_cast<std::int64_t>(index) + 1;
+        slice.sampleRate = 1000;
+        plan.slices.push_back(slice);
+        files.push_back("s" + std::to_string(index + 1) + ".wav");
+    }
+    for (std::size_t index = 0; index < used.size(); ++index) {
+        plan.notes.push_back(PlacedNote{used[index], 0, static_cast<Pulse>(index) * 240, 0});
+    }
+    return writeBms(chart, plan, files, {});
+}
+
+}  // namespace
+
+TEST(BmsWriter, BMW021_OnlyUsedSoundsAreDefined) {
+    const auto result = writeUsing(3, {0, 2});
+    ASSERT_TRUE(result.document);
+    const auto wavLines = linesStartingWith(*result.document, "#WAV");
+    EXPECT_EQ(wavLines, (std::vector<std::string>{"#WAV01 s1.wav", "#WAV03 s3.wav"}));
+    EXPECT_EQ(result.document->usage.wav, 3);
+    EXPECT_EQ(result.document->usage.wavDefined, 2);
+}
+
+TEST(BmsWriter, BMW022_BaseFollowsTheLargestUsedId) {
+    const auto result = writeUsing(1300, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9});
+    ASSERT_TRUE(result.document);
+    EXPECT_EQ(result.document->base, IdBase::Base36);
+    EXPECT_TRUE(linesStartingWith(*result.document, "#BASE").empty());
 }

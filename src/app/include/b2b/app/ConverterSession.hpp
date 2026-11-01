@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <vector>
 
 #include "b2b/app/ConvertService.hpp"
@@ -18,15 +19,26 @@ public:
     ConverterSession(const ChartSource& charts, const AudioSource& audio, const AudioCodec& codec, const FileSink& files);
 
     void openChart(const std::filesystem::path& chartPath);
+    void openCharts(const std::vector<ChartRequest>& requests, std::size_t baseIndex);
+    void selectChart(std::size_t index);
     void setOutputPath(const std::filesystem::path& outputPath);
+    void setDifficulty(std::optional<int> difficulty);
     void setOptions(const ConvertOptions& options);
     void refresh();
 
-    [[nodiscard]] bool hasChart() const noexcept { return !chartPath_.empty(); }
-    [[nodiscard]] const std::filesystem::path& chartPath() const noexcept { return chartPath_; }
-    [[nodiscard]] const std::filesystem::path& outputPath() const noexcept { return outputPath_; }
+    [[nodiscard]] ChartSummary summarize(const std::filesystem::path& chartPath) const { return service_.summarize(chartPath); }
+
+    [[nodiscard]] bool hasChart() const noexcept { return !requests_.empty(); }
+    [[nodiscard]] std::size_t chartCount() const noexcept { return requests_.size(); }
+    [[nodiscard]] std::size_t selectedIndex() const noexcept { return selected_; }
+    [[nodiscard]] std::size_t baseIndex() const noexcept { return baseIndex_; }
+    [[nodiscard]] const std::filesystem::path& chartPath() const;
+    [[nodiscard]] const std::filesystem::path& outputPath() const;
+    [[nodiscard]] const std::vector<std::filesystem::path>& outputPaths() const noexcept { return outputs_; }
+    [[nodiscard]] std::optional<int> difficulty() const;
     [[nodiscard]] const ConvertOptions& options() const noexcept { return options_; }
-    [[nodiscard]] const Conversion& conversion() const noexcept { return conversion_; }
+    [[nodiscard]] const Conversion& conversion() const;
+    [[nodiscard]] const ConversionSet& conversionSet() const noexcept { return set_; }
     [[nodiscard]] bool canExport() const;
     [[nodiscard]] bool exported() const noexcept { return exported_; }
 
@@ -40,10 +52,12 @@ private:
     CachingAudioSource audio_;
     ConvertService service_;
     PreviewService preview_;
-    std::filesystem::path chartPath_;
-    std::filesystem::path outputPath_;
+    std::vector<ChartRequest> requests_;
+    std::vector<std::filesystem::path> outputs_;
+    std::size_t baseIndex_ = 0;
+    std::size_t selected_ = 0;
     ConvertOptions options_;
-    Conversion conversion_;
+    ConversionSet set_;
     bool exported_ = false;
 };
 

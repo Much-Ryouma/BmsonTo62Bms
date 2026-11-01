@@ -8,14 +8,13 @@ namespace b2b::core {
 
 namespace {
 
-constexpr int kNormalWindowPercent = 75;
 constexpr int kSmallestJudgeRankForExRank = 5;
 constexpr double kDefaultTotalFloor = 260.0;
 constexpr double kStandardTotal = 100.0;
 
 }  // namespace
 
-JudgeHeader judgeHeaderFor(double bmsonJudgeRank) {
+JudgeHeader judgeHeaderFor(double bmsonJudgeRank, int normalJudgePercent) {
     const auto rank = static_cast<int>(std::lround(bmsonJudgeRank));
     if (rank <= 0) {
         return {};
@@ -24,9 +23,9 @@ JudgeHeader judgeHeaderFor(double bmsonJudgeRank) {
         // Why not #DEFEXRANK にする: beatoraja は 5 未満の judge_rank を BMS の #RANK として扱うため、同じ判定幅になるよう #RANK で書く
         return {JudgeHeaderKind::Rank, rank};
     }
-    // Why not judge_rank をそのまま #DEFEXRANK に書く: beatoraja は #DEFEXRANK を「NORMAL の判定幅 (75%) に対する割合」として読み、
-    // bmson の judge_rank は判定幅の割合そのものとして読むため、そのまま書くと判定が 3/4 に狭くなる
-    return {JudgeHeaderKind::DefExRank, (rank * 100 + kNormalWindowPercent - 1) / kNormalWindowPercent};
+    // Why not judge_rank をそのまま #DEFEXRANK に書く: beatoraja は #DEFEXRANK を「NORMAL の判定幅（7 鍵は 75%、pop'n は 70%）に
+    // 対する割合」として読み、bmson の judge_rank は判定幅の割合そのものとして読むため、そのまま書くと判定が狭くなる
+    return {JudgeHeaderKind::DefExRank, (rank * 100 + normalJudgePercent - 1) / normalJudgePercent};
 }
 
 double defaultTotalFor(int totalNotes) {

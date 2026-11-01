@@ -14,7 +14,7 @@ struct JudgeHeader {
     friend bool operator==(const JudgeHeader&, const JudgeHeader&) = default;
 };
 
-[[nodiscard]] JudgeHeader judgeHeaderFor(double bmsonJudgeRank);
+[[nodiscard]] JudgeHeader judgeHeaderFor(double bmsonJudgeRank, int normalJudgePercent = 75);
 
 [[nodiscard]] double defaultTotalFor(int totalNotes);
 

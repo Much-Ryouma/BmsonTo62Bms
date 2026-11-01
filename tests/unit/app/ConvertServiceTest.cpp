@@ -43,7 +43,7 @@ TEST(ConvertService, CNV001_PreparesADocumentWithTemporarySoundNames) {
     const auto conversion = fixture.prepare();
     ASSERT_FALSE(conversion.hasErrors());
     ASSERT_TRUE(conversion.document);
-    EXPECT_EQ(conversion.soundFiles, (std::vector<std::string>{"wav/Title_k0001.wav", "wav/Title_b0001.wav"}));
+    EXPECT_EQ(conversion.soundFiles, (std::vector<std::string>{"Title_k0001.wav", "Title_b0001.wav"}));
 }
 
 TEST(ConvertService, CNV002_UnreadableChartIsAnError) {
@@ -64,10 +64,10 @@ TEST(ConvertService, CNV003_MissingAudioIsAnError) {
 
 TEST(ConvertService, CNV004_UnsupportedModeStopsBeforeReadingAudio) {
     Fixture fixture;
-    fixture.charts.chart->info.modeHint = "popn-9k";
+    fixture.charts.chart->info.modeHint = "keyboard-24k";
     const auto conversion = fixture.prepare();
     EXPECT_FALSE(conversion.document);
-    EXPECT_TRUE(hasMessage(conversion.messages, app::Severity::Error, "popn-9k"));
+    EXPECT_TRUE(hasMessage(conversion.messages, app::Severity::Error, "keyboard-24k"));
     EXPECT_TRUE(fixture.audio.probes.empty());
 }
 
@@ -176,4 +176,20 @@ TEST(ConvertService, CNV014_LanesOutsideTheModeAreReported) {
     const auto conversion = fixture.prepare();
     ASSERT_FALSE(conversion.hasErrors());
     EXPECT_TRUE(hasMessage(conversion.messages, app::Severity::Warning, "BGM として書き出します"));
+}
+
+TEST(ConvertService, CNV015_DefaultExtensionFollowsTheMode) {
+    EXPECT_EQ(app::ConvertService::defaultOutputPath("C:/songs/a.bmson", "beat-14k"), std::filesystem::path("C:/songs/a.bme"));
+    EXPECT_EQ(app::ConvertService::defaultOutputPath("C:/songs/a.bmson", "popn-9k"), std::filesystem::path("C:/songs/a.pms"));
+}
+
+TEST(ConvertService, CNV016_WrongExtensionForTheModeWarns) {
+    Fixture fixture;
+    fixture.charts.chart->info.modeHint = "popn-9k";
+    const auto conversion = fixture.prepare();
+    ASSERT_FALSE(conversion.hasErrors());
+    EXPECT_TRUE(hasMessage(fixture.service.writeBms(conversion, "songs/a.bme", infra::TextEncoding::ShiftJis).messages,
+                           app::Severity::Warning, ".pms"));
+    EXPECT_FALSE(hasMessage(fixture.service.writeBms(conversion, "songs/a.pms", infra::TextEncoding::ShiftJis).messages,
+                            app::Severity::Warning, ".pms"));
 }

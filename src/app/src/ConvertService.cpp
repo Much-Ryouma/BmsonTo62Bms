@@ -2,9 +2,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <map>
+#include <set>
 #include <stdexcept>
 
+#include "b2b/core/slicing/SliceMerge.hpp"
+#include "b2b/core/timing/MeasureLayout.hpp"
 #include "b2b/infra/fs/Utf8Path.hpp"
 
 namespace b2b::app {
@@ -33,7 +37,7 @@ std::string lowerExtension(const std::string& source) {
     return extension;
 }
 
-void reportPlanStats(const core::SlicePlanStats& stats, std::vector<Message>& messages) {
+void reportPlanStats(const core::SlicePlanStats& stats, const core::KeyMode& mode, std::vector<Message>& messages) {
     if (stats.canceledBgmNotes > 0) {
         messages.push_back({Severity::Info, "同じ位置に鍵盤のノーツがある BGM のノーツ " +
                                                 std::to_string(stats.canceledBgmNotes) + " 個は、bmson と同じく鳴らさないため書き出しません"});
@@ -43,7 +47,8 @@ void reportPlanStats(const core::SlicePlanStats& stats, std::vector<Message>& me
                                                    " 個は BMS (#LNTYPE 1) で表せないため書き出しません"});
     }
     if (stats.lanesOutsideMode > 0) {
-        messages.push_back({Severity::Warning, "beat-7k にないレーン（x が 1〜8 以外）のノーツ " + std::to_string(stats.lanesOutsideMode) +
+        messages.push_back({Severity::Warning, mode.name + " にないレーン（x が 1〜" + std::to_string(mode.lanes) + " 以外）のノーツ " +
+                                                   std::to_string(stats.lanesOutsideMode) +
                                                    " 個を、BGM として書き出します"});
     }
     if (stats.notesPastAudioEnd > 0) {
@@ -81,7 +86,128 @@ void appendWriterMessages(core::BmsWriteResult& written, std::vector<Message>& m
     }
 }
 
+core::BmsWriteOptions writeOptionsFor(const ChartRequest& request, const ConvertOptions& options) {
+    core::BmsWriteOptions writeOptions;
+    writeOptions.difficulty = request.difficulty ? request.difficulty : options.difficulty;
+    return writeOptions;
+}
+
+void checkSameFolder(const std::vector<ChartRequest>& requests, std::vector<Message>& messages) {
+    const auto folderOf = [](const std::filesystem::path& path) {
+        return std::filesystem::absolute(path).parent_path().lexically_normal();
+    };
+    for (const auto& request : requests) {
+        if (folderOf(request.path) != folderOf(requests.front().path)) {
+            // Why not 別のフォルダでも読む: 音声ファイルの名前は bmson のフォルダが基準のため、フォルダが違うと同じ名前でも別の音になる
+            messages.push_back({Severity::Error, "複数の bmson をまとめて変換するときは、すべて同じフォルダに置いてください: " +
+                                                     infra::pathToUtf8(request.path)});
+            return;
+        }
+    }
+}
+
+std::string fileNameOf(const std::filesystem::path& path) {
+    return infra::pathToUtf8(path.filename());
+}
+
+void reportTimingDifferences(ConversionSet& set) {
+    const auto& base = set.charts[set.baseIndex].chart;
+    for (std::size_t chart = 0; chart < set.charts.size(); ++chart) {
+        const auto& other = set.charts[chart].chart;
+        if (chart == set.baseIndex) {
+            continue;
+        }
+        if (other.info.initBpm != base.info.initBpm || other.info.resolution != base.info.resolution ||
+            other.bpmEvents != base.bpmEvents || other.stopEvents != base.stopEvents || other.lines != base.lines) {
+            set.charts[chart].messages.push_back(
+                {Severity::Warning, "基準の譜面 (" + fileNameOf(set.charts[set.baseIndex].chartPath) +
+                                        ") と BPM・STOP・小節線・resolution のどれかが違います。別の曲の bmson が混ざっていないか確かめてください"});
+        }
+    }
+}
+
+void reportAlignment(const core::CutAlignment& alignment, std::vector<Message>& messages) {
+    if (alignment.shortenedNotes == 0) {
+        return;
+    }
+    messages.push_back({Severity::Info, "ほかの譜面の切り出し位置に合わせて、" + std::to_string(alignment.shortenedNotes) +
+                                            " 個のノーツの音を短く切り、続きを鳴らす BGM のノーツを " +
+                                            std::to_string(alignment.addedNotes) + " 個加えました"});
+}
+
+bool anyChartHasErrors(const ConversionSet& set) {
+    return std::any_of(set.charts.begin(), set.charts.end(),
+                       [](const Conversion& conversion) { return containsError(conversion.messages); });
+}
+
+constexpr std::size_t kOutsideBaseExamples = 3;
+
+void reportOutsideBase(Conversion& conversion, const core::SlicePlan& localPlan, const std::vector<std::size_t>& globalIndexOf,
+                       bool allowExtra) {
+    if (conversion.outsideBase.empty()) {
+        return;
+    }
+    const core::MeasureLayout layout(conversion.chart.info.resolution, conversion.chart.lines);
+    std::vector<std::string> examples;
+    bool more = false;
+    for (const std::size_t global : conversion.outsideBase) {
+        const auto local = std::find(globalIndexOf.begin(), globalIndexOf.end(), global) - globalIndexOf.begin();
+        const core::Slice& slice = localPlan.slices[static_cast<std::size_t>(local)];
+        char measure[16];
+        std::snprintf(measure, sizeof measure, "%03d", layout.locate(slice.firstPulse).measure);
+        const std::string example = std::string("小節 ") + measure + " の " + slice.source;
+        if (std::find(examples.begin(), examples.end(), example) != examples.end()) {
+            continue;
+        }
+        if (examples.size() == kOutsideBaseExamples) {
+            more = true;
+            break;
+        }
+        examples.push_back(example);
+    }
+    std::string listed;
+    for (const auto& example : examples) {
+        listed += (listed.empty() ? "" : "、") + example;
+    }
+    if (more) {
+        listed += " など";
+    }
+    const std::string count = std::to_string(conversion.outsideBase.size());
+    if (allowExtra) {
+        conversion.messages.push_back({Severity::Info, "基準の譜面にないスライス " + count + " 個を追加で切り出します（" + listed + "）"});
+    } else {
+        conversion.messages.push_back({Severity::Error, "基準の譜面にないスライスが " + count + " 個あります（" + listed +
+                                                            "）。「基準の譜面にないスライスを追加で切り出す」を選ぶと書き出せます"});
+    }
+}
+
 }  // namespace
+
+std::size_t defaultBaseIndex(const std::vector<ChartSummary>& charts) {
+    std::size_t best = 0;
+    for (std::size_t index = 1; index < charts.size(); ++index) {
+        const auto& candidate = charts[index];
+        const auto& current = charts[best];
+        if (candidate.level > current.level || (candidate.level == current.level && candidate.keyNotes > current.keyNotes)) {
+            best = index;
+        }
+    }
+    return best;
+}
+
+std::optional<int> guessDifficulty(const std::string& chartName) {
+    std::string upper = chartName;
+    std::transform(upper.begin(), upper.end(), upper.begin(),
+                   [](char c) { return static_cast<char>(std::toupper(static_cast<unsigned char>(c))); });
+    static const std::vector<std::pair<std::string, int>> kNames = {
+        {"BEGINNER", 1}, {"NORMAL", 2}, {"HYPER", 3}, {"ANOTHER", 4}, {"INSANE", 5}, {"LEGGENDARIA", 5}};
+    for (const auto& [name, difficulty] : kNames) {
+        if (upper.find(name) != std::string::npos) {
+            return difficulty;
+        }
+    }
+    return std::nullopt;
+}
 
 std::string extensionOf(SoundFormat format) {
     return format == SoundFormat::Ogg ? "ogg" : "wav";
@@ -91,12 +217,22 @@ bool Conversion::hasErrors() const {
     return containsError(messages) || !document;
 }
 
+bool ConversionSet::hasErrors() const {
+    return containsError(messages) || charts.empty() ||
+           std::any_of(charts.begin(), charts.end(), [](const Conversion& conversion) { return conversion.hasErrors(); });
+}
+
 bool RenderedBms::hasErrors() const {
     return containsError(messages);
 }
 
 bool ExportOutcome::hasErrors() const {
     return containsError(messages);
+}
+
+std::string soundFileOnDisk(const Conversion& conversion, std::size_t index) {
+    const std::string& name = conversion.soundFiles.at(index);
+    return conversion.soundFolder.empty() ? name : conversion.soundFolder + "/" + name;
 }
 
 RenderedBms renderBms(const core::BmsDocument& document, infra::TextEncoding encoding) {
@@ -154,32 +290,27 @@ ConvertService::ConvertService(const ChartSource& charts, const AudioSource& aud
                                const FileSink& files)
     : charts_(charts), audio_(audio), codec_(codec), files_(files) {}
 
-Conversion ConvertService::prepare(const std::filesystem::path& chartPath, const ConvertOptions& options) const {
-    Conversion conversion;
-    conversion.chartPath = chartPath;
-    checkOptions(options, conversion.messages);
-    if (containsError(conversion.messages)) {
-        return conversion;
-    }
+bool ConvertService::loadAndPlan(Conversion& conversion) const {
     try {
-        LoadedChart loaded = charts_.load(chartPath);
+        LoadedChart loaded = charts_.load(conversion.chartPath);
         conversion.chart = std::move(loaded.chart);
         for (auto& warning : loaded.warnings) {
             conversion.messages.push_back({Severity::Warning, std::move(warning)});
         }
     } catch (const std::exception& error) {
         conversion.messages.push_back({Severity::Error, std::string("bmson を読み込めません: ") + error.what()});
-        return conversion;
+        return false;
     }
 
     const auto& chart = conversion.chart;
-    if (!core::isSupportedMode(chart.info.modeHint)) {
-        conversion.messages.push_back(
-            {Severity::Error, "未対応のキーモードです: " + chart.info.modeHint + "（対応しているのは beat-7k だけです）"});
-        return conversion;
+    const core::KeyMode* mode = core::findKeyMode(chart.info.modeHint);
+    if (mode == nullptr) {
+        conversion.messages.push_back({Severity::Error, "未対応のキーモードです: " + chart.info.modeHint + "（対応しているのは " +
+                                                            core::supportedModeNames() + "）"});
+        return false;
     }
 
-    const std::filesystem::path directory = chartPath.parent_path();
+    const std::filesystem::path directory = conversion.chartPath.parent_path();
     std::map<std::string, std::string> located;
     for (auto& channel : conversion.chart.soundChannels) {
         if (channel.name.empty()) {
@@ -217,41 +348,146 @@ Conversion ConvertService::prepare(const std::filesystem::path& chartPath, const
         channelAudio.push_back(found->second);
     }
     if (containsError(conversion.messages)) {
-        return conversion;
+        return false;
     }
 
     try {
-        conversion.plan = core::planSlices(chart, core::bmson::timingOf(chart), channelAudio);
+        conversion.plan = core::planSlices(chart, core::bmson::timingOf(chart), channelAudio, mode->lanes);
     } catch (const std::invalid_argument& error) {
         conversion.messages.push_back({Severity::Error, std::string("bmson の内容を解釈できません: ") + error.what()});
-        return conversion;
+        return false;
     }
-    reportPlanStats(conversion.plan.stats, conversion.messages);
+    reportPlanStats(conversion.plan.stats, *mode, conversion.messages);
     reportUnsupportedInfo(chart.info, conversion.messages);
+    return true;
+}
 
-    core::BmsWriteOptions writeOptions;
-    writeOptions.difficulty = options.difficulty;
+Conversion ConvertService::prepare(const std::filesystem::path& chartPath, const ConvertOptions& options) const {
+    ConversionSet set = prepareSet({ChartRequest{chartPath, options.difficulty}}, 0, options);
+    Conversion conversion = std::move(set.charts.front());
+    conversion.messages.insert(conversion.messages.begin(), set.messages.begin(), set.messages.end());
+    return conversion;
+}
+
+ConversionSet ConvertService::prepareSet(const std::vector<ChartRequest>& requests, std::size_t baseIndex,
+                                         const ConvertOptions& options) const {
+    ConversionSet set;
+    if (requests.empty()) {
+        set.messages.push_back({Severity::Error, "bmson が選ばれていません"});
+        return set;
+    }
+    set.baseIndex = baseIndex < requests.size() ? baseIndex : 0;
+    for (const auto& request : requests) {
+        Conversion conversion;
+        conversion.chartPath = request.path;
+        set.charts.push_back(std::move(conversion));
+    }
+    checkOptions(options, set.messages);
+    checkSameFolder(requests, set.messages);
+    if (containsError(set.messages)) {
+        return set;
+    }
+
+    bool planned = true;
+    for (auto& conversion : set.charts) {
+        planned = loadAndPlan(conversion) && planned;
+    }
+    if (!planned) {
+        return set;
+    }
+    reportTimingDifferences(set);
+
+    std::vector<core::SlicePlan> plans;
+    std::vector<core::TimingMap> timings;
+    for (const auto& conversion : set.charts) {
+        plans.push_back(conversion.plan);
+        timings.push_back(core::bmson::timingOf(conversion.chart));
+    }
+    const std::vector<core::CutAlignment> alignments = core::alignSliceCuts(plans, timings);
+    for (std::size_t chart = 0; chart < set.charts.size(); ++chart) {
+        reportAlignment(alignments[chart], set.charts[chart].messages);
+    }
+    const core::MergedSlices merged = core::mergeSlicePlans(plans, set.baseIndex);
+    set.sliceUsers.resize(merged.slices.size());
+    for (std::size_t chart = 0; chart < set.charts.size(); ++chart) {
+        Conversion& conversion = set.charts[chart];
+        conversion.outsideBase = merged.outsideBase[chart];
+        reportOutsideBase(conversion, plans[chart], merged.globalIndexOf[chart], options.allowExtraSlices);
+        conversion.plan = merged.planFor(plans[chart], chart);
+        std::set<std::size_t> used;
+        for (const auto& note : conversion.plan.notes) {
+            used.insert(note.slice);
+        }
+        for (const std::size_t slice : used) {
+            set.sliceUsers[slice].push_back(chart);
+        }
+    }
+    if (anyChartHasErrors(set)) {
+        return set;
+    }
+
     // Why not 名前を付けてから 1 回だけ組み立てる: {id} を名前に使うには 36進数か 62進数かが先に決まっている必要があり、
     // それは定義の数で決まる。名前に関係しないので、仮の名前で一度組み立てて進数を確かめる
-    const std::vector<std::string> placeholders(conversion.plan.slices.size(), "_");
-    core::BmsWriteResult trial = core::writeBms(chart, conversion.plan, placeholders, writeOptions);
-    if (!trial.document) {
-        appendWriterMessages(trial, conversion.messages);
-        return conversion;
+    const std::vector<std::string> placeholders(merged.slices.size(), "_");
+    core::IdBase namingBase = core::IdBase::Base36;
+    for (std::size_t chart = 0; chart < set.charts.size(); ++chart) {
+        Conversion& conversion = set.charts[chart];
+        core::BmsWriteResult trial =
+            core::writeBms(conversion.chart, conversion.plan, placeholders, writeOptionsFor(requests[chart], options));
+        if (!trial.document) {
+            appendWriterMessages(trial, conversion.messages);
+            continue;
+        }
+        // Why not 基準の譜面の進数だけで決める: 追加で切り出したスライスの ID は基準の譜面の定義の数を超えることがあり、
+        // 36進数では表せない ID が名前に入るおそれがあるため、どれかが 62進数なら 62進数にする
+        if (trial.document->base == core::IdBase::Base62) {
+            namingBase = core::IdBase::Base62;
+        }
+    }
+    if (anyChartHasErrors(set)) {
+        return set;
     }
 
-    NamingResult naming = nameSounds(chart, conversion.plan, trial.document->base, options.naming,
-                                     extensionOf(options.soundFormat), options.encoding);
-    conversion.messages.insert(conversion.messages.end(), naming.messages.begin(), naming.messages.end());
+    const Conversion& base = set.charts[set.baseIndex];
+    NamingResult naming = nameSounds(base.chart, base.plan, namingBase, options.naming, extensionOf(options.soundFormat),
+                                     options.encoding);
+    set.messages.insert(set.messages.end(), naming.messages.begin(), naming.messages.end());
     if (naming.hasErrors()) {
-        return conversion;
+        return set;
     }
-    conversion.soundFiles = std::move(naming.paths);
 
-    core::BmsWriteResult written = core::writeBms(chart, conversion.plan, conversion.soundFiles, writeOptions);
-    appendWriterMessages(written, conversion.messages);
-    conversion.document = std::move(written.document);
-    return conversion;
+    for (std::size_t chart = 0; chart < set.charts.size(); ++chart) {
+        Conversion& conversion = set.charts[chart];
+        conversion.soundFiles = naming.paths;
+        conversion.soundFolder = naming.folder;
+        core::BmsWriteResult written =
+            core::writeBms(conversion.chart, conversion.plan, conversion.soundFiles, writeOptionsFor(requests[chart], options));
+        appendWriterMessages(written, conversion.messages);
+        conversion.document = std::move(written.document);
+    }
+    return set;
+}
+
+ChartSummary ConvertService::summarize(const std::filesystem::path& chartPath) const {
+    ChartSummary summary;
+    summary.path = chartPath;
+    try {
+        const LoadedChart loaded = charts_.load(chartPath);
+        const auto& info = loaded.chart.info;
+        summary.title = info.title;
+        summary.chartName = info.chartName;
+        summary.level = info.level;
+        summary.modeHint = info.modeHint;
+        const core::KeyMode* mode = core::findKeyMode(info.modeHint);
+        const int lanes = mode != nullptr ? mode->lanes : core::kBeat7kLanes;
+        for (const auto& channel : loaded.chart.soundChannels) {
+            summary.keyNotes += static_cast<int>(std::count_if(channel.notes.begin(), channel.notes.end(),
+                                                               [lanes](const auto& note) { return note.x >= 1 && note.x <= lanes; }));
+        }
+    } catch (const std::exception& error) {
+        summary.error = std::string("bmson を読み込めません: ") + error.what();
+    }
+    return summary;
 }
 
 ExportOutcome ConvertService::exportSounds(const Conversion& conversion, const std::filesystem::path& bmsPath,
@@ -289,7 +525,7 @@ ExportOutcome ConvertService::exportSounds(const Conversion& conversion, const s
             const core::Slice& slice = conversion.plan.slices[index];
             core::PcmBuffer piece = core::extractFrames(audio, slice.startFrame, slice.endFrame);
             core::applyFade(piece, options.fade, slice.startFrame == 0);
-            const std::filesystem::path target = bmsDirectory / infra::pathFromUtf8(conversion.soundFiles[index]);
+            const std::filesystem::path target = bmsDirectory / infra::pathFromUtf8(soundFileOnDisk(conversion, index));
             try {
                 if (options.soundFormat == SoundFormat::Ogg) {
                     codec_.writeOgg(target, piece, options.oggQuality);
@@ -321,6 +557,14 @@ WriteOutcome ConvertService::writeBms(const Conversion& conversion, const std::f
     }
     RenderedBms rendered = renderBms(*conversion.document, encoding);
     outcome.messages = std::move(rendered.messages);
+    if (const core::KeyMode* mode = core::findKeyMode(conversion.chart.info.modeHint)) {
+        const bool pms = lowerExtension(infra::pathToUtf8(output)) == ".pms";
+        // Why not 拡張子を気にしない: プレイヤーは拡張子が .pms かどうかで pop'n の譜面かを決めるため、合っていないと別のモードとして読まれる
+        if (pms != (mode->extension == "pms")) {
+            outcome.messages.push_back({Severity::Warning, mode->name + " の譜面は拡張子を ." + mode->extension +
+                                                               " にしてください（.pms かどうかで、プレイヤーが pop'n の譜面かを決めるため）"});
+        }
+    }
     if (std::filesystem::absolute(output).parent_path().lexically_normal() !=
         std::filesystem::absolute(conversion.chartPath).parent_path().lexically_normal()) {
         outcome.messages.push_back({Severity::Warning,
@@ -339,9 +583,10 @@ WriteOutcome ConvertService::writeBms(const Conversion& conversion, const std::f
     return outcome;
 }
 
-std::filesystem::path ConvertService::defaultOutputPath(const std::filesystem::path& chartPath) {
+std::filesystem::path ConvertService::defaultOutputPath(const std::filesystem::path& chartPath, const std::string& modeHint) {
+    const core::KeyMode* mode = core::findKeyMode(modeHint);
     std::filesystem::path output = chartPath;
-    output.replace_extension(".bme");
+    output.replace_extension("." + (mode != nullptr ? mode->extension : std::string("bme")));
     return output;
 }
 

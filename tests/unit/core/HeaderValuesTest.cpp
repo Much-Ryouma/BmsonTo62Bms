@@ -37,3 +37,8 @@ TEST(HeaderValues, HDR007_DecimalsAreTrimmed) {
     EXPECT_EQ(formatDecimal(1.0 / 3.0), "0.333333");
     EXPECT_EQ(formatDecimal(-0.0), "0");
 }
+
+TEST(HeaderValues, HDR008_PopnUsesItsOwnNormalWindow) {
+    EXPECT_EQ(judgeHeaderFor(100.0, 70), (JudgeHeader{JudgeHeaderKind::DefExRank, 143}));
+    EXPECT_EQ(143 * 70 / 100, 100);
+}

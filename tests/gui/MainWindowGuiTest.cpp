@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
@@ -97,7 +98,7 @@ TEST(MainWindowGui, GUI002_EditingANamePatternRenamesTheSlices) {
     window->openChart(fixture.chart());
     child<QLineEdit>(*window, "keyPattern")->setText(QStringLiteral("{src}_{index:02}"));
     window->refreshNow();
-    EXPECT_EQ(child<QTableWidget>(*window, "slices")->item(0, 2)->text(), QStringLiteral("wav/drums_01.wav"));
+    EXPECT_EQ(child<QTableWidget>(*window, "slices")->item(0, 2)->text(), QStringLiteral("drums_01.wav"));
     EXPECT_TRUE(child<QLabel>(*window, "keyPatternExample")->text().contains(QStringLiteral("drums_01.wav")));
 }
 
@@ -118,7 +119,7 @@ TEST(MainWindowGui, GUI004_ExportWritesFilesAndEnablesThePlayer) {
     window->startExport();
     window->waitForExport();
     EXPECT_TRUE(std::filesystem::exists(fixture.directory / "song.bme"));
-    EXPECT_TRUE(std::filesystem::exists(fixture.directory / "wav" / "Song_k0001.wav"));
+    EXPECT_TRUE(std::filesystem::exists(fixture.directory / "Song_k0001.wav"));
     EXPECT_TRUE(child<QPushButton>(*window, "launchPlayer")->isEnabled());
     EXPECT_EQ(child<QComboBox>(*window, "previewSource")->currentIndex(), 1);
 }
@@ -206,4 +207,104 @@ TEST(MainWindowGui, GUI010_OnlyRelevantSettingsAreEditable) {
     window->refreshNow();
     EXPECT_TRUE(child<QDoubleSpinBox>(*window, "fadeOut")->isEnabled());
     EXPECT_TRUE(child<QSpinBox>(*window, "oggQuality")->isEnabled());
+}
+
+namespace {
+
+void writeChart(const std::filesystem::path& path, const char* notes) {
+    std::ofstream(path) << R"({"version":"1.0.0","info":{"title":"Song","init_bpm":120,"resolution":240},"sound_channels":[)"
+                        << R"({"name":"drums.wav","notes":)" << notes << "}]}";
+}
+
+struct SetFixture : Fixture {
+    std::vector<std::size_t> offeredCounts;
+
+    explicit SetFixture(const char* name) : Fixture(name) {
+        writeChart(directory / "easy.bmson", R"([{"x":1,"y":0},{"x":0,"y":240,"c":true},{"x":0,"y":480,"c":true}])");
+        writeChart(directory / "normal.bmson", R"([{"x":1,"y":0},{"x":2,"y":240}])");
+    }
+
+    std::unique_ptr<gui::MainWindow> setWindow(bool accept = true) {
+        auto made = window();
+        made->setChartSetChooser([this, accept](const std::vector<app::ChartSummary>& offered) -> std::optional<gui::ChartSetChoice> {
+            offeredCounts.push_back(offered.size());
+            if (!accept) {
+                return std::nullopt;
+            }
+            return gui::defaultChartSetChoice(offered);
+        });
+        return made;
+    }
+};
+
+}  // namespace
+
+TEST(MainWindowGui, GUI011_OpeningSeveralChartsMakesASet) {
+    SetFixture fixture("gui011");
+    auto window = fixture.setWindow();
+    window->openCharts({fixture.directory / "easy.bmson", fixture.chart()});
+    EXPECT_EQ(fixture.offeredCounts, (std::vector<std::size_t>{2}));
+    auto* selector = child<QComboBox>(*window, "chartSelector");
+    EXPECT_EQ(selector->count(), 2);
+    EXPECT_EQ(selector->currentIndex(), 1);
+    EXPECT_FALSE(child<QTableWidget>(*window, "slices")->isColumnHidden(7));
+    EXPECT_TRUE(child<QLineEdit>(*window, "outputPath")->text().endsWith(QStringLiteral("song.bme")));
+}
+
+TEST(MainWindowGui, GUI012_SelectingAChartShowsItsOutputAndIds) {
+    SetFixture fixture("gui012");
+    auto window = fixture.setWindow();
+    window->openCharts({fixture.directory / "easy.bmson", fixture.chart()});
+    child<QComboBox>(*window, "chartSelector")->setCurrentIndex(0);
+    EXPECT_TRUE(child<QLineEdit>(*window, "outputPath")->text().endsWith(QStringLiteral("easy.bme")));
+    EXPECT_TRUE(child<QLabel>(*window, "summary")->text().contains(QStringLiteral("#WAV 3（ID は 04 まで）")))
+        << child<QLabel>(*window, "summary")->text().toStdString();
+}
+
+TEST(MainWindowGui, GUI013_ExportWritesEveryChartOfTheSet) {
+    SetFixture fixture("gui013");
+    auto window = fixture.setWindow();
+    window->openCharts({fixture.directory / "easy.bmson", fixture.chart()});
+    window->startExport();
+    window->waitForExport();
+    EXPECT_TRUE(std::filesystem::exists(fixture.directory / "song.bme"));
+    ASSERT_TRUE(std::filesystem::exists(fixture.directory / "easy.bme"));
+    int sounds = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(fixture.directory)) {
+        sounds += entry.path().filename().string().rfind("Song_", 0) == 0 ? 1 : 0;
+    }
+    EXPECT_EQ(sounds, 5);
+    std::ifstream easy(fixture.directory / "easy.bme");
+    const std::string text((std::istreambuf_iterator<char>(easy)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(text.find("#WAV02"), std::string::npos);
+}
+
+TEST(MainWindowGui, GUI014_ExtraSlicesNeedTheCheckBox) {
+    SetFixture fixture("gui014");
+    {
+        auto window = fixture.setWindow();
+        window->openCharts({fixture.chart(), fixture.directory / "normal.bmson"});
+        EXPECT_FALSE(child<QPushButton>(*window, "export")->isEnabled());
+        EXPECT_TRUE(messagesContain(*window, QStringLiteral("基準の譜面にないスライス")));
+        child<QCheckBox>(*window, "allowExtraSlices")->setChecked(true);
+        window->refreshNow();
+        EXPECT_TRUE(child<QPushButton>(*window, "export")->isEnabled());
+        auto* table = child<QTableWidget>(*window, "slices");
+        bool highlighted = false;
+        for (int row = 0; row < table->rowCount(); ++row) {
+            highlighted = highlighted || table->item(row, 0)->background().style() != Qt::NoBrush;
+        }
+        EXPECT_TRUE(highlighted);
+        window->close();
+    }
+    auto window = fixture.window();
+    EXPECT_TRUE(child<QCheckBox>(*window, "allowExtraSlices")->isChecked());
+}
+
+TEST(MainWindowGui, GUI015_CancelingTheSetOpensNothing) {
+    SetFixture fixture("gui015");
+    auto window = fixture.setWindow(false);
+    window->openCharts({fixture.directory / "easy.bmson", fixture.chart()});
+    EXPECT_EQ(fixture.offeredCounts.size(), 1u);
+    EXPECT_EQ(child<QTableWidget>(*window, "slices")->rowCount(), 0);
 }

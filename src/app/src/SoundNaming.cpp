@@ -85,7 +85,10 @@ NamingResult nameSounds(const core::bmson::Chart& chart, const core::SlicePlan& 
                                                           std::to_string(replaced) + " 個を、音声ファイルの名前では _ に置き換えました"});
     }
 
-    core::SoundNames names = core::finishSoundNames(stems, folder, extension);
+    // Why not #WAV にサブフォルダを含める: サブフォルダは書き出したファイルを置く場所を分けるためだけに使い、
+    // BMS の定義はファイル名だけにする（利用者の指定）
+    core::SoundNames names = core::finishSoundNames(stems, "", extension);
+    result.folder = folder;
     for (auto& warning : names.warnings) {
         result.messages.push_back({Severity::Warning, std::move(warning)});
     }

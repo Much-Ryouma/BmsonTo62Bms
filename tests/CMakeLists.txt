@@ -15,12 +15,14 @@ b2b_add_test_suite(b2b_core_tests
         unit/core/FadeTest.cpp
         unit/core/FileNamesTest.cpp
         unit/core/HeaderValuesTest.cpp
+        unit/core/KeyModeTest.cpp
         unit/core/LaunchCommandTest.cpp
         unit/core/MeasureLayoutTest.cpp
         unit/core/MixTest.cpp
         unit/core/NamePatternTest.cpp
         unit/core/ObjectIdTest.cpp
         unit/core/PcmTest.cpp
+        unit/core/SliceMergeTest.cpp
         unit/core/SlicePlanTest.cpp
         unit/core/TimingMapTest.cpp
     LIBRARIES b2b::core)
@@ -36,6 +38,7 @@ b2b_add_test_suite(b2b_infra_tests
 b2b_add_test_suite(b2b_app_tests
     SOURCES
         unit/app/ConvertServiceTest.cpp
+        unit/app/ConvertSetTest.cpp
         unit/app/ConverterSessionTest.cpp
         unit/app/PreviewServiceTest.cpp
         unit/app/RoundTripTest.cpp

@@ -43,10 +43,7 @@ app::ConvertOptions loadConvertOptions(QSettings& settings) {
     options.encoding = settings.value(QStringLiteral("convert/encoding")).toString() == QStringLiteral("utf8")
                            ? infra::TextEncoding::Utf8
                            : infra::TextEncoding::ShiftJis;
-    const int difficulty = settings.value(QStringLiteral("convert/difficulty"), 0).toInt();
-    if (difficulty >= 1 && difficulty <= 5) {
-        options.difficulty = difficulty;
-    }
+    options.allowExtraSlices = settings.value(QStringLiteral("convert/allowExtraSlices"), false).toBool();
     options.soundFormat = settings.value(QStringLiteral("sound/format")).toString() == QStringLiteral("ogg")
                               ? app::SoundFormat::Ogg
                               : app::SoundFormat::Wav;
@@ -66,7 +63,7 @@ app::ConvertOptions loadConvertOptions(QSettings& settings) {
 void saveConvertOptions(QSettings& settings, const app::ConvertOptions& options) {
     settings.setValue(QStringLiteral("convert/encoding"),
                       options.encoding == infra::TextEncoding::Utf8 ? QStringLiteral("utf8") : QStringLiteral("sjis"));
-    settings.setValue(QStringLiteral("convert/difficulty"), options.difficulty.value_or(0));
+    settings.setValue(QStringLiteral("convert/allowExtraSlices"), options.allowExtraSlices);
     settings.setValue(QStringLiteral("sound/format"),
                       options.soundFormat == app::SoundFormat::Ogg ? QStringLiteral("ogg") : QStringLiteral("wav"));
     settings.setValue(QStringLiteral("sound/oggQuality"), options.oggQuality);

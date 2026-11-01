@@ -172,3 +172,13 @@ TEST(SlicePlan, SLC016_LanesOutsideTheModeAreNeverCanceled) {
     EXPECT_EQ(result.notes.size(), 2u);
     EXPECT_EQ(result.stats.canceledBgmNotes, 0);
 }
+
+TEST(SlicePlan, SLC017_LaneLimitFollowsTheMode) {
+    auto chart = makeChart();
+    chart.soundChannels = {channel("a.wav", {note(14, 0), note(17, 480, true)})};
+    const auto result = planSlices(chart, bmson::timingOf(chart), {kAudio}, 16);
+    ASSERT_EQ(result.notes.size(), 2u);
+    EXPECT_EQ(result.notes[0].lane, 14);
+    EXPECT_EQ(result.notes[1].lane, 0);
+    EXPECT_EQ(result.stats.lanesOutsideMode, 1);
+}

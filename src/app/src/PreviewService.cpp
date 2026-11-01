@@ -27,7 +27,7 @@ core::StereoAudio PreviewService::plannedSlice(const Conversion& conversion, std
 
 core::StereoAudio PreviewService::exportedSlice(const Conversion& conversion, std::size_t index,
                                                 const std::filesystem::path& bmsPath) const {
-    const auto path = bmsPath.parent_path() / infra::pathFromUtf8(conversion.soundFiles.at(index));
+    const auto path = bmsPath.parent_path() / infra::pathFromUtf8(soundFileOnDisk(conversion, index));
     return core::stereoOf(codec_.decode(path, SampleRequest::Float32));
 }
 

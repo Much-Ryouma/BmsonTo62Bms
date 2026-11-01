@@ -54,7 +54,7 @@ struct Fixture {
 };
 
 std::string writtenPath(const app::Conversion& conversion, std::size_t index) {
-    return infra::pathToUtf8(std::filesystem::path("songs") / infra::pathFromUtf8(conversion.soundFiles[index]));
+    return infra::pathToUtf8(std::filesystem::path("songs") / infra::pathFromUtf8(app::soundFileOnDisk(conversion, index)));
 }
 
 std::filesystem::path scratchDirectory(const char* name) {
@@ -172,4 +172,16 @@ TEST(SoundExport, EXP008_ProgressIsReportedPerFile) {
     const std::size_t total = fixture.conversion.plan.slices.size();
     ASSERT_EQ(reports.size(), total);
     EXPECT_EQ(reports.back(), std::make_pair(total, total));
+}
+
+TEST(SoundExport, EXP009_SubfolderHoldsFilesButNotTheDefinitions) {
+    Fixture fixture;
+    app::ConvertOptions options;
+    options.naming.folderPattern = "wav";
+    static_cast<void>(fixture.run(options));
+    const std::string name = fixture.conversion.soundFiles.front();
+    EXPECT_EQ(name.find('/'), std::string::npos);
+    EXPECT_EQ(fixture.codec.written.count("songs/wav/" + name), 1u);
+    const auto& lines = fixture.conversion.document->lines;
+    EXPECT_TRUE(std::any_of(lines.begin(), lines.end(), [&](const core::BmsLine& line) { return line.text == "#WAV01 " + name; }));
 }

@@ -12,7 +12,7 @@
 namespace b2b::app {
 
 struct NamingOptions {
-    std::string folderPattern = "wav";
+    std::string folderPattern;
     std::string keyPattern = "{song:.16}_k{index:04}";
     std::string bgmPattern = "{song:.16}_b{index:04}";
 
@@ -21,6 +21,7 @@ struct NamingOptions {
 
 struct NamingResult {
     std::vector<std::string> paths;
+    std::string folder;
     std::vector<Message> messages;
 
     [[nodiscard]] bool hasErrors() const;

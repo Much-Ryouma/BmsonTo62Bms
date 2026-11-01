@@ -10,10 +10,12 @@ add_library(b2b_core STATIC
     src/bmson/Bmson.cpp
     src/bms/BmsWriter.cpp
     src/bms/HeaderValues.cpp
+    src/bms/KeyMode.cpp
     src/bms/ObjectId.cpp
     src/naming/FileNames.cpp
     src/naming/NamePattern.cpp
     src/player/LaunchCommand.cpp
+    src/slicing/SliceMerge.cpp
     src/slicing/SlicePlan.cpp
     src/timing/MeasureLayout.cpp
     src/timing/TimingMap.cpp)

@@ -119,9 +119,9 @@ inline ReadBms readBms(const std::string& text) {
             auto group = event;
             for (; group != events.cend() && group->measure == measure && group->position == position; ++group) {
                 const std::string& channel = group->channel;
-                if (channel == "01" || channel.front() == '1') {
+                if (channel == "01" || channel.front() == '1' || channel.front() == '2') {
                     result.notes.push_back({seconds, channel, idOf(group->id)});
-                } else if (channel.front() == '5') {
+                } else if (channel.front() == '5' || channel.front() == '6') {
                     longNoteObjects[channel].push_back({seconds, idOf(group->id)});
                 }
             }

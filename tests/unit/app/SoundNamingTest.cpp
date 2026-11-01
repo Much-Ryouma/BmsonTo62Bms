@@ -36,7 +36,7 @@ TEST(SoundNaming, NAM001_DefaultPatternsNumberKeyAndBgmSeparately) {
     chart.info.title = "Song";
     chart.soundChannels = {channel("a.wav", {note(1, 0), note(2, 480, true), note(0, 960, true)})};
     EXPECT_EQ(name(chart).paths,
-              (std::vector<std::string>{"wav/Song_k0001.wav", "wav/Song_k0002.wav", "wav/Song_b0001.wav"}));
+              (std::vector<std::string>{"Song_k0001.wav", "Song_k0002.wav", "Song_b0001.wav"}));
 }
 
 TEST(SoundNaming, NAM002_VariablesComeFromTheSlice) {
@@ -46,7 +46,7 @@ TEST(SoundNaming, NAM002_VariablesComeFromTheSlice) {
     options.keyPattern = "{src}_{lane}";
     options.bgmPattern = "{measure:03}_{id}";
     EXPECT_EQ(name(chart, options, infra::TextEncoding::ShiftJis, core::IdBase::Base62).paths,
-              (std::vector<std::string>{"wav/drums_3.wav", "wav/001_02.wav"}));
+              (std::vector<std::string>{"drums_3.wav", "001_02.wav"}));
 }
 
 TEST(SoundNaming, NAM003_UnrepresentableCharactersAreReplaced) {
@@ -54,9 +54,9 @@ TEST(SoundNaming, NAM003_UnrepresentableCharactersAreReplaced) {
     chart.info.title = "曲🎵";
     chart.soundChannels = {channel("a.wav", {note(1, 0)})};
     const auto shiftJis = name(chart);
-    EXPECT_EQ(shiftJis.paths.front(), "wav/曲__k0001.wav");
+    EXPECT_EQ(shiftJis.paths.front(), "曲__k0001.wav");
     EXPECT_TRUE(hasSeverity(shiftJis.messages, app::Severity::Warning));
-    EXPECT_EQ(name(chart, {}, infra::TextEncoding::Utf8).paths.front(), "wav/曲🎵_k0001.wav");
+    EXPECT_EQ(name(chart, {}, infra::TextEncoding::Utf8).paths.front(), "曲🎵_k0001.wav");
 }
 
 TEST(SoundNaming, NAM004_FolderNameIsSanitized) {
@@ -65,7 +65,9 @@ TEST(SoundNaming, NAM004_FolderNameIsSanitized) {
     chart.soundChannels = {channel("a.wav", {note(1, 0)})};
     app::NamingOptions options;
     options.folderPattern = "{song}";
-    EXPECT_EQ(name(chart, options).paths.front(), "A_B/A_B_k0001.wav");
+    const auto named = name(chart, options);
+    EXPECT_EQ(named.paths.front(), "A_B_k0001.wav");
+    EXPECT_EQ(named.folder, "A_B");
 }
 
 TEST(SoundNaming, NAM005_PatternErrorsNameThePattern) {
