@@ -25,3 +25,6 @@ bmson の読み込みから BMS の書き出しまでを順に行い、利用者
 | CNV-009 | chart_name と title_image がある。同じ位置に鍵盤と BGM のノーツがある | 変換を準備する | chart_name と title_image の警告、BGM を書き出さない旨の情報が出る |
 | CNV-010 | `songs/a.bmson` | `songs/a.bme`／`out/a.bme` に書き出す | `songs` では警告なし。`out` では書き出したうえで「別のフォルダ」の警告（BGA などのファイル名は bmson のフォルダが基準のため） |
 | CNV-011 | フェードアウト 60 ms、OGG の品質 11、名前のパターンの誤り | 変換を準備する | それぞれエラー。bmson も音声も読まない |
+| CNV-012 | bmson では `drums.wav`、実際には `drums.ogg` だけがある | 変換を準備する | `drums.ogg` を調べて使い（スライスの元の音声も `drums.ogg`）、警告を出す |
+| CNV-013 | `drums.wav` と `drums.ogg` の両方がある／`drums` という名前の音声がどれもない | 変換を準備する | 両方あれば bmson のとおり `drums.wav` を使う。どれもなければエラー |
+| CNV-014 | beat-7k にないレーン（x=14）のノーツがある | 変換を準備する | 書き出せて、「BGM として書き出します」の警告を出す |

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(bmsonto62bms
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "Converts bmson charts into extended (base-62) BMS with sliced sounds"
     HOMEPAGE_URL "https://github.com/Much-Ryouma/bmsonto62bms"
     LANGUAGES C CXX)

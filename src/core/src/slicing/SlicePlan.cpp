@@ -41,7 +41,7 @@ std::int64_t frameAt(double seconds, int sampleRate) {
 
 class Planner {
 public:
-    Planner(const TimingMap& timing, SlicePlan& plan) : timing_(timing), plan_(plan) {}
+    Planner(const TimingMap& timing, SlicePlan& plan, int keyLanes) : timing_(timing), plan_(plan), keyLanes_(keyLanes) {}
 
     void addChannel(std::size_t channelIndex, const bmson::SoundChannel& channel, const AudioInfo& audio) {
         if (audio.sampleRate <= 0 || audio.frames < 0) {
@@ -49,6 +49,14 @@ public:
         }
         std::vector<bmson::Note> notes = channel.notes;
         std::stable_sort(notes.begin(), notes.end(), [](const bmson::Note& a, const bmson::Note& b) { return a.y < b.y; });
+        std::vector<bool> outsideMode(notes.size(), false);
+        for (std::size_t index = 0; index < notes.size(); ++index) {
+            if (notes[index].x != 0 && (notes[index].x < 1 || notes[index].x > keyLanes_)) {
+                notes[index].x = 0;
+                notes[index].l = 0;
+                outsideMode[index] = true;
+            }
+        }
 
         double anchor = 0.0;
         for (std::size_t first = 0; first < notes.size();) {
@@ -74,7 +82,7 @@ public:
 
             for (std::size_t index = first; index < last; ++index) {
                 addNote(channelIndex, channel.name, audio.sampleRate, notes[index], start, end, hasLaneNote,
-                        start >= audio.frames);
+                        start >= audio.frames, outsideMode[index]);
             }
             first = last;
         }
@@ -117,12 +125,16 @@ public:
 
 private:
     void addNote(std::size_t channelIndex, const std::string& source, int sampleRate, const bmson::Note& note,
-                 std::int64_t start, std::int64_t end, bool hasLaneNote, bool pastAudioEnd) {
+                 std::int64_t start, std::int64_t end, bool hasLaneNote, bool pastAudioEnd, bool outsideMode) {
+        if (outsideMode) {
+            ++plan_.stats.lanesOutsideMode;
+        }
         if (note.x != 0 && note.up) {
             ++plan_.stats.ignoredLongNoteEndSounds;
             return;
         }
-        if (note.x == 0 && hasLaneNote) {
+        // Why not キーモード外のレーンのノーツも取り消す: もとは鍵盤のノーツとして置かれた音なので、鳴らさないと音が抜けてしまう
+        if (note.x == 0 && hasLaneNote && !outsideMode) {
             // Why not BGM も鳴らす: 同じ位置に鍵盤のノーツがあるときの BGM は鳴らさない（IgusaBmsonStudio のプレビューと同じ扱い）。
             // 鳴らすと同じスライスが二重に鳴り、bmson で聴いた音と変わってしまうため
             ++plan_.stats.canceledBgmNotes;
@@ -154,6 +166,7 @@ private:
 
     const TimingMap& timing_;
     SlicePlan& plan_;
+    int keyLanes_;
     std::vector<Draft> drafts_;
     std::map<SliceKey, std::size_t> indexOf_;
 };
@@ -172,12 +185,13 @@ int SlicePlan::countOf(SliceKind kind) const {
     return static_cast<int>(std::count_if(slices.begin(), slices.end(), [kind](const Slice& s) { return s.kind == kind; }));
 }
 
-SlicePlan planSlices(const bmson::Chart& chart, const TimingMap& timing, const std::vector<AudioInfo>& channelAudio) {
+SlicePlan planSlices(const bmson::Chart& chart, const TimingMap& timing, const std::vector<AudioInfo>& channelAudio,
+                     int keyLanes) {
     if (channelAudio.size() != chart.soundChannels.size()) {
         throw std::invalid_argument("audio info is required for every sound channel");
     }
     SlicePlan plan;
-    Planner planner(timing, plan);
+    Planner planner(timing, plan, keyLanes);
     for (std::size_t index = 0; index < chart.soundChannels.size(); ++index) {
         planner.addChannel(index, chart.soundChannels[index], channelAudio[index]);
     }

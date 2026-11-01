@@ -67,6 +67,9 @@ using ExportProgress = std::function<void(std::size_t done, std::size_t total)>;
 
 [[nodiscard]] SampleRequest sampleRequestFor(const std::string& source, SoundFormat format);
 
+[[nodiscard]] std::optional<std::string> locateSoundFile(const std::string& declared, const std::filesystem::path& directory,
+                                                       const AudioSource& audio);
+
 class ConvertService {
 public:
     ConvertService(const ChartSource& charts, const AudioSource& audio, const AudioCodec& codec, const FileSink& files);

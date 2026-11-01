@@ -146,3 +146,34 @@ TEST(ConvertService, CNV011_InvalidOptionsStopBeforeReadingAnything) {
     EXPECT_TRUE(fixture.audio.probes.empty());
     EXPECT_TRUE(hasMessage(fixture.prepare(pattern).messages, app::Severity::Error, "パラ音のファイル名"));
 }
+
+TEST(ConvertService, CNV012_SoundWithAnotherExtensionIsUsedWithAWarning) {
+    Fixture fixture;
+    fixture.audio.files.clear();
+    fixture.audio.files["drums.ogg"] = core::AudioInfo{1000, 10000};
+    const auto conversion = fixture.prepare();
+    ASSERT_FALSE(conversion.hasErrors());
+    EXPECT_EQ(conversion.plan.slices.front().source, "drums.ogg");
+    EXPECT_EQ(fixture.audio.probes["drums.ogg"], 1);
+    EXPECT_TRUE(hasMessage(conversion.messages, app::Severity::Warning, "drums.ogg"));
+}
+
+TEST(ConvertService, CNV013_DeclaredFileIsPreferredAndMissingFilesStillFail) {
+    Fixture fixture;
+    fixture.audio.files["drums.ogg"] = core::AudioInfo{1000, 10000};
+    EXPECT_EQ(fixture.prepare().plan.slices.front().source, "drums.wav");
+
+    fixture.audio.files.clear();
+    fixture.audio.files["other.ogg"] = core::AudioInfo{1000, 10000};
+    const auto missing = fixture.prepare();
+    EXPECT_FALSE(missing.document);
+    EXPECT_TRUE(hasMessage(missing.messages, app::Severity::Error, "drums.wav"));
+}
+
+TEST(ConvertService, CNV014_LanesOutsideTheModeAreReported) {
+    Fixture fixture;
+    fixture.charts.chart->soundChannels[0].notes.push_back(note(14, 960));
+    const auto conversion = fixture.prepare();
+    ASSERT_FALSE(conversion.hasErrors());
+    EXPECT_TRUE(hasMessage(conversion.messages, app::Severity::Warning, "BGM として書き出します"));
+}

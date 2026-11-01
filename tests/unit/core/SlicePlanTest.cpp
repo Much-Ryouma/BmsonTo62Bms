@@ -151,3 +151,24 @@ TEST(SlicePlan, SLC014_OnlyKeyNotesKeepTheirLength) {
         EXPECT_EQ(placed.length, placed.lane == 0 ? 0 : 480);
     }
 }
+
+TEST(SlicePlan, SLC015_LanesOutsideTheModeBecomeBgm) {
+    auto chart = makeChart();
+    chart.soundChannels = {channel("a.wav", {note(14, 0, false, 480), note(-1, 480, true), note(9, 960, true)})};
+    const auto result = plan(chart);
+    ASSERT_EQ(result.notes.size(), 3u);
+    for (const auto& placed : result.notes) {
+        EXPECT_EQ(placed.lane, 0);
+        EXPECT_EQ(placed.length, 0);
+    }
+    EXPECT_EQ(result.stats.lanesOutsideMode, 3);
+    EXPECT_EQ(result.countOf(SliceKind::Bgm), 3);
+}
+
+TEST(SlicePlan, SLC016_LanesOutsideTheModeAreNeverCanceled) {
+    auto chart = makeChart();
+    chart.soundChannels = {channel("a.wav", {note(1, 0), note(14, 0)})};
+    const auto result = plan(chart);
+    EXPECT_EQ(result.notes.size(), 2u);
+    EXPECT_EQ(result.stats.canceledBgmNotes, 0);
+}

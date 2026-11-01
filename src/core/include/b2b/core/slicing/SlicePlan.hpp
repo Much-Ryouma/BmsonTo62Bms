@@ -46,6 +46,7 @@ struct SlicePlanStats {
     int canceledBgmNotes = 0;
     int ignoredLongNoteEndSounds = 0;
     int notesPastAudioEnd = 0;
+    int lanesOutsideMode = 0;
 };
 
 struct SlicePlan {
@@ -56,7 +57,9 @@ struct SlicePlan {
     [[nodiscard]] int countOf(SliceKind kind) const;
 };
 
+inline constexpr int kBeat7kLanes = 8;
+
 [[nodiscard]] SlicePlan planSlices(const bmson::Chart& chart, const TimingMap& timing,
-                                   const std::vector<AudioInfo>& channelAudio);
+                                   const std::vector<AudioInfo>& channelAudio, int keyLanes = kBeat7kLanes);
 
 }  // namespace b2b::core

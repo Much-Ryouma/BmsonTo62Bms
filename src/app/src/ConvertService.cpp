@@ -42,6 +42,10 @@ void reportPlanStats(const core::SlicePlanStats& stats, std::vector<Message>& me
         messages.push_back({Severity::Warning, "ロングノーツの終点の音 (up) " + std::to_string(stats.ignoredLongNoteEndSounds) +
                                                    " 個は BMS (#LNTYPE 1) で表せないため書き出しません"});
     }
+    if (stats.lanesOutsideMode > 0) {
+        messages.push_back({Severity::Warning, "beat-7k にないレーン（x が 1〜8 以外）のノーツ " + std::to_string(stats.lanesOutsideMode) +
+                                                   " 個を、BGM として書き出します"});
+    }
     if (stats.notesPastAudioEnd > 0) {
         messages.push_back({Severity::Warning, "音声ファイルの長さより後を鳴らすノーツが " +
                                                    std::to_string(stats.notesPastAudioEnd) + " 個あります（無音になります）"});
@@ -115,6 +119,28 @@ RenderedBms renderBms(const core::BmsDocument& document, infra::TextEncoding enc
     return rendered;
 }
 
+// Why not bmson に書かれた名前だけを探す: 音声を wav から ogg に変換したのに bmson を書き直し忘れることがよくあり、
+// 名前の拡張子だけが違うファイルなら同じ音として使えるため
+std::optional<std::string> locateSoundFile(const std::string& declared, const std::filesystem::path& directory,
+                                           const AudioSource& audio) {
+    static const std::vector<std::string> kExtensions = {".wav", ".ogg", ".flac", ".mp3"};
+    if (audio.exists(directory / infra::pathFromUtf8(declared))) {
+        return declared;
+    }
+    const std::string declaredExtension = lowerExtension(declared);
+    for (const auto& extension : kExtensions) {
+        if (extension == declaredExtension) {
+            continue;
+        }
+        std::filesystem::path candidate = infra::pathFromUtf8(declared);
+        candidate.replace_extension(infra::pathFromUtf8(extension));
+        if (audio.exists(directory / candidate)) {
+            return infra::pathToUtf8(candidate);
+        }
+    }
+    return std::nullopt;
+}
+
 SampleRequest sampleRequestFor(const std::string& source, SoundFormat format) {
     if (format == SoundFormat::Ogg) {
         return SampleRequest::Float32;
@@ -153,9 +179,26 @@ Conversion ConvertService::prepare(const std::filesystem::path& chartPath, const
         return conversion;
     }
 
+    const std::filesystem::path directory = chartPath.parent_path();
+    std::map<std::string, std::string> located;
+    for (auto& channel : conversion.chart.soundChannels) {
+        if (channel.name.empty()) {
+            continue;
+        }
+        auto found = located.find(channel.name);
+        if (found == located.end()) {
+            const auto actual = locateSoundFile(channel.name, directory, audio_);
+            found = located.emplace(channel.name, actual.value_or(channel.name)).first;
+            if (actual && *actual != channel.name) {
+                conversion.messages.push_back({Severity::Warning, "bmson では " + channel.name + " ですが見つからないため、同じ名前で拡張子が違う " +
+                                                                      *actual + " を使います"});
+            }
+        }
+        channel.name = found->second;
+    }
+
     std::map<std::string, core::AudioInfo> probed;
     std::vector<core::AudioInfo> channelAudio;
-    const std::filesystem::path directory = chartPath.parent_path();
     for (const auto& channel : chart.soundChannels) {
         if (channel.name.empty()) {
             conversion.messages.push_back({Severity::Error, "音声ファイル名が空の sound_channels があります"});

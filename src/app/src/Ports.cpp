@@ -45,6 +45,11 @@ core::AudioInfo LocalAudioSource::probe(const std::filesystem::path& path) const
     return infra::probeAudioFile(path);
 }
 
+bool LocalAudioSource::exists(const std::filesystem::path& path) const {
+    std::error_code error;
+    return std::filesystem::is_regular_file(path, error);
+}
+
 void LocalFileSink::write(const std::filesystem::path& path, const std::string& bytes) const {
     ensureParentDirectory(path);
     infra::writeTextFileAtomically(path, bytes);

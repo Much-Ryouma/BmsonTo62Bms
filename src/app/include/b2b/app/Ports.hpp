@@ -29,6 +29,7 @@ class AudioSource {
 public:
     virtual ~AudioSource() = default;
     [[nodiscard]] virtual core::AudioInfo probe(const std::filesystem::path& path) const = 0;
+    [[nodiscard]] virtual bool exists(const std::filesystem::path& path) const = 0;
 };
 
 class FileSink {
@@ -59,6 +60,7 @@ public:
     explicit CachingAudioSource(const AudioSource& inner) : inner_(inner) {}
 
     [[nodiscard]] core::AudioInfo probe(const std::filesystem::path& path) const override;
+    [[nodiscard]] bool exists(const std::filesystem::path& path) const override { return inner_.exists(path); }
     void clear();
 
 private:
@@ -75,6 +77,7 @@ public:
 class LocalAudioSource final : public AudioSource {
 public:
     [[nodiscard]] core::AudioInfo probe(const std::filesystem::path& path) const override;
+    [[nodiscard]] bool exists(const std::filesystem::path& path) const override;
 };
 
 class LocalFileSink final : public FileSink {

@@ -37,6 +37,10 @@ public:
         }
         return found->second;
     }
+
+    [[nodiscard]] bool exists(const std::filesystem::path& path) const override {
+        return files.contains(infra::pathToUtf8(path.filename()));
+    }
 };
 
 class FakeFileSink final : public app::FileSink {
