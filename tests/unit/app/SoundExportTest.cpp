@@ -181,7 +181,11 @@ TEST(SoundExport, EXP009_SubfolderHoldsFilesButNotTheDefinitions) {
     static_cast<void>(fixture.run(options));
     const std::string name = fixture.conversion.soundFiles.front();
     EXPECT_EQ(name.find('/'), std::string::npos);
-    EXPECT_EQ(fixture.codec.written.count("songs/wav/" + name), 1u);
+    // Why not 文字列で比べる: Windows ではパスの区切りが \ になるため、パスとして正規化して比べる
+    const auto expected = (std::filesystem::path("songs") / "wav" / infra::pathFromUtf8(name)).lexically_normal();
+    EXPECT_EQ(std::count_if(fixture.codec.written.begin(), fixture.codec.written.end(),
+                            [&](const auto& written) { return infra::pathFromUtf8(written.first).lexically_normal() == expected; }),
+              1);
     const auto& lines = fixture.conversion.document->lines;
     EXPECT_TRUE(std::any_of(lines.begin(), lines.end(), [&](const core::BmsLine& line) { return line.text == "#WAV01 " + name; }));
 }
